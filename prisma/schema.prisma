@@ -37,6 +37,14 @@ enum ServiceCategory {
   EXTRA
 }
 
+/// CLASSIFIED: a visita tem itens que somam o total. PENDING ("a classificar"): visita importada
+/// sem itens (o App Barber só exporta o total); o barbeiro escolhe os itens depois.
+enum ClassificationStatus {
+  CLASSIFIED
+  PENDING
+}
+
+/// PENDING: prévia gerada, aguardando confirmação. COMPLETED: visitas criadas. FAILED: erro ao confirmar.
 enum ImportStatus {
   PENDING
   COMPLETED
@@ -71,7 +79,8 @@ model Service {
   createdAt         DateTime        @default(now()) @map("created_at") @db.Timestamptz
   updatedAt         DateTime        @updatedAt @map("updated_at") @db.Timestamptz
 
-  items AppointmentItem[]
+  items     AppointmentItem[]
+  ruleItems PriceRuleItem[]
 
   @@map("services")
 }
@@ -87,7 +96,8 @@ model Product {
   createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
-  items AppointmentItem[]
+  items     AppointmentItem[]
+  ruleItems PriceRuleItem[]
 
   @@map("products")
 }
@@ -120,29 +130,36 @@ model ExpenseCategory {
 
 /// Uma VISITA do cliente (pode ter vários itens). Ticket médio = soma(totalCents) / nº de visitas.
 /// feeBps/feeCents/netCents são congelados no lançamento: mudar a taxa depois não altera o histórico.
+/// Invariante (garantida pelo código que grava visitas, ver assertVisitItemsConsistent em
+/// src/domain/import-preview.ts): CLASSIFIED ⇒ itens somam totalCents; PENDING ⇒ nenhum item.
 model Appointment {
-  id            String        @id @default(cuid())
-  performedAt   DateTime      @map("performed_at") @db.Timestamptz
-  barberId      String        @map("barber_id")
-  paymentMethod PaymentMethod @map("payment_method")
-  feeBps        Int           @map("fee_bps")
-  totalCents    Int           @map("total_cents")
-  feeCents      Int           @map("fee_cents")
-  netCents      Int           @map("net_cents")
-  notes         String?
-  source        EntrySource   @default(MANUAL)
-  externalId    String?       @map("external_id")
-  importBatchId String?       @map("import_batch_id")
-  createdAt     DateTime      @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt     DateTime      @updatedAt @map("updated_at") @db.Timestamptz
+  id             String               @id @default(cuid())
+  performedAt    DateTime             @map("performed_at") @db.Timestamptz
+  barberId       String               @map("barber_id")
+  paymentMethod  PaymentMethod        @map("payment_method")
+  feeBps         Int                  @map("fee_bps")
+  totalCents     Int                  @map("total_cents")
+  feeCents       Int                  @map("fee_cents")
+  netCents       Int                  @map("net_cents")
+  notes          String?
+  source         EntrySource          @default(MANUAL)
+  externalId     String?              @map("external_id")
+  importBatchId  String?              @map("import_batch_id")
+  classification ClassificationStatus @default(CLASSIFIED)
+  /// Regra de valor usada para gerar os itens (ex.: "Corte e sobrancelha"), para o ranking.
+  priceRuleId    String?              @map("price_rule_id")
+  createdAt      DateTime             @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime             @updatedAt @map("updated_at") @db.Timestamptz
 
   barber      Barber            @relation(fields: [barberId], references: [id], onDelete: Restrict)
   importBatch ImportBatch?      @relation(fields: [importBatchId], references: [id], onDelete: SetNull)
+  priceRule   PriceRule?        @relation(fields: [priceRuleId], references: [id], onDelete: SetNull)
   items       AppointmentItem[]
 
   @@unique([source, externalId])
   @@index([performedAt])
   @@index([barberId, performedAt])
+  @@index([classification, performedAt])
   @@map("appointments")
 }
 
@@ -171,6 +188,48 @@ model AppointmentItem {
   @@index([serviceId])
   @@index([productId])
   @@map("appointment_items")
+}
+
+/// Regra de sugestão por valor: "comanda de R$ 50 = Corte (R$ 40) + Sobrancelha (R$ 10)".
+/// Um valor com exatamente uma regra ativa gera os itens automaticamente na importação;
+/// sem regra ou com mais de uma, a visita fica PENDING ("a classificar").
+/// A soma dos itens tem que ser igual a amountCents (validado em src/domain/price-rules.ts).
+model PriceRule {
+  id          String   @id @default(cuid())
+  /// Nome como aparece no App Barber (ex.: "Corte e sobrancelha").
+  label       String
+  amountCents Int      @map("amount_cents")
+  active      Boolean  @default(true)
+  sortOrder   Int      @default(0) @map("sort_order")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  items        PriceRuleItem[]
+  appointments Appointment[]
+
+  @@index([amountCents])
+  @@map("price_rules")
+}
+
+/// Item de uma regra: um serviço OU um produto (CHECK escrita à mão na migration),
+/// com o preço que ele assume dentro da regra (pode diferir do preço do catálogo).
+model PriceRuleItem {
+  id             String   @id @default(cuid())
+  ruleId         String   @map("rule_id")
+  serviceId      String?  @map("service_id")
+  productId      String?  @map("product_id")
+  quantity       Int      @default(1)
+  unitPriceCents Int      @map("unit_price_cents")
+  sortOrder      Int      @default(0) @map("sort_order")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  rule    PriceRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  service Service?  @relation(fields: [serviceId], references: [id], onDelete: Restrict)
+  product Product?  @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@index([ruleId])
+  @@map("price_rule_items")
 }
 
 model Expense {
@@ -212,19 +271,34 @@ model CashClosing {
   @@map("cash_closings")
 }
 
-// ─── Importação (estrutura preparada, implementação futura) ─────────────────
+// ─── Importação do App Barber ───────────────────────────────────────────────
 
+/// Uma importação do Histórico de Comandas. Enquanto PENDING, `meta.rows` guarda as linhas
+/// normalizadas da prévia (sem Cliente, Cadastro nem Finalização); ao confirmar, as linhas
+/// saem do meta e ficam só as contagens e os erros por linha.
 model ImportBatch {
-  id         String       @id @default(cuid())
-  source     EntrySource
-  fileName   String       @map("file_name")
-  status     ImportStatus @default(PENDING)
-  rowCount   Int          @default(0) @map("row_count")
-  errorCount Int          @default(0) @map("error_count")
-  /// Metadados livres do arquivo importado (colunas detectadas, erros por linha...).
-  meta       Json?
-  createdAt  DateTime     @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt  DateTime     @updatedAt @map("updated_at") @db.Timestamptz
+  id                String       @id @default(cuid())
+  source            EntrySource
+  fileName          String       @map("file_name")
+  status            ImportStatus @default(PENDING)
+  rowCount          Int          @default(0) @map("row_count")
+  /// Fechadas novas que viraram visita.
+  importedCount     Int          @default(0) @map("imported_count")
+  /// Das importadas, quantas ficaram "a classificar".
+  unclassifiedCount Int          @default(0) @map("unclassified_count")
+  /// Fechadas já importadas antes (mesmo externalId).
+  duplicateCount    Int          @default(0) @map("duplicate_count")
+  /// Abertas com data passada: "finalize no App Barber".
+  openPastCount     Int          @default(0) @map("open_past_count")
+  /// Abertas com data futura (agendamentos).
+  openFutureCount   Int          @default(0) @map("open_future_count")
+  cancelledCount    Int          @default(0) @map("cancelled_count")
+  /// Fechadas com vários profissionais ("L.F + 1") que precisam de revisão.
+  reviewCount       Int          @default(0) @map("review_count")
+  errorCount        Int          @default(0) @map("error_count")
+  meta              Json?
+  createdAt         DateTime     @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt         DateTime     @updatedAt @map("updated_at") @db.Timestamptz
 
   appointments Appointment[]
 

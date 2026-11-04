@@ -3,6 +3,8 @@
 //
 // O faturamento é sempre quebrado em 3 grupos:
 //   Serviço = itens com serviço MAIN · Extra = itens com serviço EXTRA · Produto = itens com produto
+// Visitas importadas ainda "a classificar" (sem itens) entram à parte, em unclassifiedCents,
+// para o bruto não ficar menor que o dinheiro que entrou.
 
 export type ServiceCategoryValue = "MAIN" | "EXTRA";
 export type RevenueGroup = "SERVICE" | "EXTRA" | "PRODUCT";
@@ -23,6 +25,8 @@ export type GroupTotals = {
   serviceCents: number;
   extraCents: number;
   productCents: number;
+  /** Total das visitas "a classificar" (ainda sem itens). */
+  unclassifiedCents: number;
   grossCents: number;
 };
 
@@ -31,6 +35,7 @@ export type GroupTickets = {
   serviceCents: number;
   extraCents: number;
   productCents: number;
+  unclassifiedCents: number;
 };
 
 export type ProductMargin = {
@@ -58,8 +63,12 @@ export function itemGroup(item: Pick<ReportItem, "serviceId" | "productId" | "se
   throw new Error(`Item de serviço ${item.serviceId} sem categoria`);
 }
 
-/** Faturamento por grupo. grossCents é sempre a soma dos 3 (nunca digitado). */
-export function revenueByGroup(items: ReportItem[]): GroupTotals {
+/**
+ * Faturamento por grupo. grossCents é sempre a soma dos grupos (nunca digitado).
+ * `unclassifiedCents` = soma de totalCents das visitas PENDING do período (elas não têm itens).
+ */
+export function revenueByGroup(items: ReportItem[], unclassifiedCents = 0): GroupTotals {
+  assertNonNegativeInt(unclassifiedCents, "unclassifiedCents");
   const totals = { serviceCents: 0, extraCents: 0, productCents: 0 };
   for (const item of items) {
     assertNonNegativeInt(item.totalCents, "totalCents");
@@ -68,7 +77,11 @@ export function revenueByGroup(items: ReportItem[]): GroupTotals {
     else if (group === "EXTRA") totals.extraCents += item.totalCents;
     else totals.productCents += item.totalCents;
   }
-  return { ...totals, grossCents: totals.serviceCents + totals.extraCents + totals.productCents };
+  return {
+    ...totals,
+    unclassifiedCents,
+    grossCents: totals.serviceCents + totals.extraCents + totals.productCents + unclassifiedCents,
+  };
 }
 
 /**
@@ -94,6 +107,7 @@ export function ticketByGroup(groups: GroupTotals, visitCount: number): GroupTic
     serviceCents: averageTicket(groups.serviceCents, visitCount),
     extraCents: averageTicket(groups.extraCents, visitCount),
     productCents: averageTicket(groups.productCents, visitCount),
+    unclassifiedCents: averageTicket(groups.unclassifiedCents, visitCount),
   };
 }
 

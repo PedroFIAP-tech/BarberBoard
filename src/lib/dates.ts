@@ -25,6 +25,26 @@ export function toDayKeyBR(date: Date | number): string {
   return format(inBR(date), "yyyy-MM-dd");
 }
 
+const BR_DATE_TIME = /^(\d{2})\/(\d{2})\/(\d{4})(?:\s+(\d{2}):(\d{2})(?::(\d{2}))?)?$/;
+
+/**
+ * "03/11/2026 16:30" (horário de Brasília) → instante. Aceita só a data ("03/11/2026" = 00:00)
+ * e segundos opcionais. Devolve null se o texto ou a data forem inválidos (ex.: 31/02).
+ */
+export function parseDateTimeBR(text: string): Date | null {
+  const m = BR_DATE_TIME.exec(text.trim());
+  if (!m) return null;
+  const [day, month, year, hour = 0, minute = 0, second = 0] = [m[1], m[2], m[3], m[4], m[5], m[6]].map(
+    (part) => (part === undefined ? undefined : Number(part)),
+  ) as number[];
+  if (hour > 23 || minute > 59 || second > 59) return null;
+
+  const date = new TZDate(year, month - 1, day, hour, minute, second, 0, TZ);
+  // new TZDate(2026, 1, 31) "transborda" para março: rejeita datas que não existem.
+  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) return null;
+  return new Date(date.getTime());
+}
+
 /**
  * Converte um dia de calendário para o valor gravado em colunas `@db.Date`.
  * O Prisma lê/grava @db.Date como meia-noite UTC, então "2026-11-04" → 2026-11-04T00:00:00Z.

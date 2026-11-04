@@ -16,7 +16,7 @@ import { TZDate } from "@date-fns/tz";
 import { addDays, getDay, subDays } from "date-fns";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PaymentMethod, PrismaClient, ServiceCategory } from "../src/generated/prisma/client";
-import { calcAppointmentTotals, calcItemTotal } from "../src/domain/pricing";
+import { calcAppointmentTotals, calcFee, calcItemTotal } from "../src/domain/pricing";
 import {
   averageTicket,
   extraCountByService,
@@ -90,30 +90,40 @@ const BARBERS = [
 
 const { MAIN, EXTRA } = ServiceCategory;
 
+// Catálogo real do App Barber (Cadastros → Serviços). Preços ainda serão padronizados numa
+// reunião com o barbeiro: edite aqui (e as regras abaixo). Duração a confirmar.
 const SERVICES = [
-  { name: "Corte", category: MAIN, defaultPriceCents: 4000, durationMin: 40 },
-  { name: "Barba", category: MAIN, defaultPriceCents: 3500, durationMin: 30 },
-  { name: "Combo (corte + barba)", category: MAIN, defaultPriceCents: 7000, durationMin: 60 },
-  { name: "Pigmentação", category: MAIN, defaultPriceCents: 4000, durationMin: 30 },
-  { name: "Sobrancelha", category: EXTRA, defaultPriceCents: 1500, durationMin: 10 },
-  { name: "Pezinho", category: EXTRA, defaultPriceCents: 1000, durationMin: 10 },
-  { name: "Depilação nariz", category: EXTRA, defaultPriceCents: 1500, durationMin: 10 },
-  { name: "Depilação orelha", category: EXTRA, defaultPriceCents: 1500, durationMin: 10 },
-  { name: "Hidratação", category: EXTRA, defaultPriceCents: 2500, durationMin: 20 },
-  { name: "Selagem", category: EXTRA, defaultPriceCents: 4000, durationMin: 40 },
-  { name: "Hidratação de barba", category: EXTRA, defaultPriceCents: 2000, durationMin: 15 },
-  { name: "Contorno", category: EXTRA, defaultPriceCents: 1000, durationMin: 10 },
-  { name: "Limpeza", category: EXTRA, defaultPriceCents: 3500, durationMin: 20 },
+  { name: "Corte", category: MAIN, defaultPriceCents: 4000 },
+  { name: "Barba", category: MAIN, defaultPriceCents: 4000 },
+  { name: "Relaxamento", category: MAIN, defaultPriceCents: 3000 },
+  { name: "Sobrancelha", category: EXTRA, defaultPriceCents: 1000 },
+  { name: "Selagem", category: EXTRA, defaultPriceCents: 6000 },
 ] as const;
 
-// Custo de ~50% do preço. O "Gel fixador" fica sem custo de propósito,
-// para exercitar a regra "produto sem custo não entra na margem".
+type ServiceName = (typeof SERVICES)[number]["name"];
+
+// FICTÍCIOS: o App Barber não tem produtos cadastrados. Existem só para testar a margem.
+// Custo de ~50% do preço; o gel fica sem custo de propósito ("sem custo não entra na margem").
 const PRODUCTS = [
-  { name: "Pomada modeladora", priceCents: 3500, costCents: 1750 },
-  { name: "Óleo para barba", priceCents: 4000, costCents: 2000 },
-  { name: "Shampoo", priceCents: 3000, costCents: 1600 },
-  { name: "Gel fixador", priceCents: 2500, costCents: null },
+  { name: "Pomada modeladora (fictício)", priceCents: 3500, costCents: 1750 },
+  { name: "Óleo para barba (fictício)", priceCents: 4000, costCents: 2000 },
+  { name: "Shampoo (fictício)", priceCents: 3000, costCents: 1600 },
+  { name: "Gel fixador (fictício)", priceCents: 2500, costCents: null },
 ] as const;
+
+// Regras de valor: comanda de R$ X no App Barber = estes itens. Os combos do App Barber
+// ("Corte e sobrancelha"...) são UM serviço lá; aqui viram itens para manter Serviço/Extra.
+// R$ 40 sugere Corte: Barba também custa R$ 40, mas é rara (3 contra 73 no ranking); quando
+// for barba, o barbeiro corrige. Qualquer outro valor fica "a classificar".
+const PRICE_RULES: { label: string; items: [ServiceName, number][] }[] = [
+  { label: "Corte", items: [["Corte", 4000]] },
+  { label: "Corte e sobrancelha", items: [["Corte", 4000], ["Sobrancelha", 1000]] },
+  { label: "Corte e barba", items: [["Corte", 4000], ["Barba", 4000]] },
+  { label: "Corte barba e sobrancelha", items: [["Corte", 4000], ["Barba", 4000], ["Sobrancelha", 1000]] },
+  { label: "Selagem", items: [["Selagem", 6000]] },
+  { label: "Relaxamento", items: [["Relaxamento", 3000]] },
+  { label: "Sobrancelha", items: [["Sobrancelha", 1000]] },
+];
 
 const PAYMENT_FEES: Record<PaymentMethod, number> = {
   PIX: 0,
@@ -141,20 +151,25 @@ const HOUR_WEIGHTS = [
   [14, 0.8], [15, 1.5], [16, 1.5], [17, 1.4], [18, 1.3], [19, 1],
 ] as const;
 
-const MAIN_SERVICE_WEIGHTS = [
-  ["Corte", 62], ["Combo (corte + barba)", 16], ["Barba", 15], ["Pigmentação", 7],
-] as const;
+// Tipos de visita, com peso aproximado do Ranking do App Barber. Os que têm regra usam os itens
+// da regra; "Barba" sozinha (R$ 40) não tem regra própria, então define os itens aqui.
+const VISIT_TYPES: { label: string; weight: number; items?: [ServiceName, number][] }[] = [
+  { label: "Corte", weight: 73 },
+  { label: "Corte e sobrancelha", weight: 50 },
+  { label: "Corte barba e sobrancelha", weight: 17 },
+  { label: "Corte e barba", weight: 9 },
+  { label: "Selagem", weight: 5 },
+  { label: "Sobrancelha", weight: 4 },
+  { label: "Barba", weight: 3, items: [["Barba", 4000]] },
+  { label: "Relaxamento", weight: 2 },
+];
 
-// Sobrancelha domina os extras.
-const EXTRA_SERVICE_WEIGHTS = [
-  ["Sobrancelha", 50], ["Depilação nariz", 12], ["Pezinho", 10], ["Contorno", 6],
-  ["Hidratação", 5], ["Hidratação de barba", 5], ["Selagem", 4], ["Limpeza", 4],
-  ["Depilação orelha", 4],
-] as const;
-
-const EXTRA_ONLY_CHANCE = 0.04; // visita só com um extra (ex.: só sobrancelha)
-const EXTRA_CHANCE = 0.35; // serviço principal + 1 extra
+const DISCOUNT_CHANCE = 0.05; // R$ 5 de desconto no 1º item (vira um valor sem regra)
 const PRODUCT_CHANCE = 0.1; // + 1 produto
+
+// Visitas importadas "a classificar" (sem itens) nos últimos dias, para testar /classificar.
+// Nenhum desses valores tem regra, então todas ficam PENDING.
+const PENDING_VISIT_VALUES = [4500, 6500, 7000, 10000, 4500, 6500, 12000, 7000];
 
 const PAYMENT_WEIGHTS = [
   [PaymentMethod.PIX, 35], [PaymentMethod.CASH, 31],
@@ -196,6 +211,10 @@ type AppointmentRow = {
   feeCents: number;
   netCents: number;
   notes: string | null;
+  source?: "MANUAL" | "APP_BARBER";
+  externalId?: string;
+  classification?: "CLASSIFIED" | "PENDING";
+  priceRuleId?: string | null;
 };
 
 async function main() {
@@ -209,6 +228,8 @@ async function main() {
       // 1. Limpa tudo, respeitando as foreign keys.
       await tx.appointmentItem.deleteMany();
       await tx.appointment.deleteMany();
+      await tx.priceRuleItem.deleteMany();
+      await tx.priceRule.deleteMany();
       await tx.importBatch.deleteMany();
       await tx.cashClosing.deleteMany();
       await tx.expense.deleteMany();
@@ -239,6 +260,27 @@ async function main() {
       const serviceByName = new Map(services.map((s) => [s.name, s]));
       const categoryByName = new Map(categories.map((c) => [c.name, c]));
 
+      const ruleIdByLabel = new Map<string, string>();
+      for (const [i, rule] of PRICE_RULES.entries()) {
+        const created = await tx.priceRule.create({
+          data: {
+            label: rule.label,
+            amountCents: rule.items.reduce((sum, [, price]) => sum + price, 0),
+            sortOrder: i,
+            items: {
+              create: rule.items.map(([service, unitPriceCents], j) => ({
+                serviceId: serviceByName.get(service)!.id,
+                unitPriceCents,
+                sortOrder: j,
+              })),
+            },
+          },
+          select: { id: true },
+        });
+        ruleIdByLabel.set(rule.label, created.id);
+      }
+      const visitTypeWeights = VISIT_TYPES.map((t) => [t, t.weight] as const);
+
       // 3. Visitas e itens.
       const appointmentRows: AppointmentRow[] = [];
       const itemRows: ItemRow[] = [];
@@ -263,29 +305,24 @@ async function main() {
           const appointmentId = randomUUID();
           const items: ItemRow[] = [];
 
-          const addService = (name: string, discountCents = 0) => {
-            const service = serviceByName.get(name)!;
+          // Itens do tipo de visita (pela regra), com desconto ocasional no 1º item.
+          const visitType = weightedPick(visitTypeWeights);
+          const typeItems = visitType.items ?? PRICE_RULES.find((r) => r.label === visitType.label)!.items;
+          const hasDiscount = chance(DISCOUNT_CHANCE);
+          typeItems.forEach(([name, priceCents], i) => {
             items.push({
               id: randomUUID(),
               appointmentId,
-              serviceId: service.id,
+              serviceId: serviceByName.get(name)!.id,
               productId: null,
               quantity: 1,
-              unitPriceCents: service.defaultPriceCents - discountCents,
+              unitPriceCents: priceCents - (hasDiscount && i === 0 ? 500 : 0),
               unitCostCents: null,
               totalCents: 0,
             });
-          };
-
-          // Itens: 1 principal (+ às vezes 1 extra) (+ às vezes 1 produto), ou só 1 extra.
-          let hasDiscount = false;
-          if (chance(EXTRA_ONLY_CHANCE)) {
-            addService(weightedPick(EXTRA_SERVICE_WEIGHTS));
-          } else {
-            hasDiscount = chance(0.05); // R$ 5 de desconto no serviço principal
-            addService(weightedPick(MAIN_SERVICE_WEIGHTS), hasDiscount ? 500 : 0);
-            if (chance(EXTRA_CHANCE)) addService(weightedPick(EXTRA_SERVICE_WEIGHTS));
-          }
+          });
+          // Só vale a regra se o valor fechou com ela (sem desconto nem produto).
+          let priceRuleId = hasDiscount ? null : (ruleIdByLabel.get(visitType.label) ?? null);
           if (chance(PRODUCT_CHANCE)) {
             const product = products[randInt(0, products.length - 1)];
             items.push({
@@ -298,6 +335,7 @@ async function main() {
               unitCostCents: product.costCents, // custo congelado na venda
               totalCents: 0,
             });
+            priceRuleId = null;
           }
 
           for (const item of items) item.totalCents = calcItemTotal(item);
@@ -311,6 +349,7 @@ async function main() {
             feeBps,
             ...totals,
             notes: hasDiscount ? "Desconto fidelidade" : chance(0.05) ? "Cliente novo" : null,
+            priceRuleId,
           });
           itemRows.push(...items);
 
@@ -320,6 +359,37 @@ async function main() {
           }
         }
       }
+
+      // Visitas "a classificar": vieram do App Barber só com o total, sem itens.
+      const pendingRows: AppointmentRow[] = [];
+      const recentOpenDays = [1, 2, 3, 4, 5, 6, 7, 8]
+        .map((n) => subDays(today, n))
+        .filter((d) => VISITS_PER_WEEKDAY[getDay(d)] > 1); // dias de movimento normal
+      PENDING_VISIT_VALUES.forEach((totalCents, i) => {
+        const day = recentOpenDays[i % recentOpenDays.length];
+        const paymentMethod = weightedPick(PAYMENT_WEIGHTS);
+        const feeBps = PAYMENT_FEES[paymentMethod];
+        const { feeCents, netCents } = calcFee(totalCents, feeBps);
+        pendingRows.push({
+          id: randomUUID(),
+          performedAt: atBR(day, weightedPick(HOUR_WEIGHTS), 0),
+          barberId: chance(LUIZ_SHARE) ? luiz.id : paulo.id,
+          paymentMethod,
+          feeBps,
+          totalCents,
+          feeCents,
+          netCents,
+          notes: null,
+          source: "APP_BARBER",
+          externalId: `seed-${String(i + 1).padStart(3, "0")}`, // nunca colide: comanda real é só dígitos
+          classification: "PENDING",
+        });
+        if (paymentMethod === PaymentMethod.CASH) {
+          const dayKey = toDayKeyBR(day);
+          cashByDay.set(dayKey, (cashByDay.get(dayKey) ?? 0) + totalCents);
+        }
+      });
+      appointmentRows.push(...pendingRows);
 
       await tx.appointment.createMany({ data: appointmentRows });
       await tx.appointmentItem.createMany({ data: itemRows });
@@ -383,7 +453,8 @@ async function main() {
         unitCostCents: i.unitCostCents,
       });
       const reportItems = itemRows.map(toReportItem);
-      const groups = revenueByGroup(reportItems);
+      const unclassifiedCents = pendingRows.reduce((s, a) => s + a.totalCents, 0);
+      const groups = revenueByGroup(reportItems, unclassifiedCents);
       const tickets = ticketByGroup(groups, appointmentRows.length);
       const margin = productMargin(reportItems);
       const fees = appointmentRows.reduce((s, a) => s + a.feeCents, 0);
@@ -394,11 +465,13 @@ async function main() {
       console.table({
         "Barbeiros": barbers.length,
         "Serviços (principal + extra)": services.length,
-        "Produtos": products.length,
+        "Produtos (fictícios)": products.length,
         "Visitas": appointmentRows.length,
         "  do Luiz": appointmentRows.filter((a) => a.barberId === luiz.id).length,
         "  do Paulo": appointmentRows.filter((a) => a.barberId === paulo.id).length,
+        "  a classificar": pendingRows.length,
         "Itens": itemRows.length,
+        "Regras de valor": PRICE_RULES.length,
         "Despesas": expenseRows.length,
         "Fechamentos de caixa": closedDays.length,
       });
@@ -406,6 +479,7 @@ async function main() {
         "Serviço": { valor: formatBRL(groups.serviceCents), "%": pct(groups.serviceCents), ticket: formatBRL(tickets.serviceCents) },
         "Extra": { valor: formatBRL(groups.extraCents), "%": pct(groups.extraCents), ticket: formatBRL(tickets.extraCents) },
         "Produto": { valor: formatBRL(groups.productCents), "%": pct(groups.productCents), ticket: formatBRL(tickets.productCents) },
+        "A classificar": { valor: formatBRL(groups.unclassifiedCents), "%": pct(groups.unclassifiedCents), ticket: formatBRL(tickets.unclassifiedCents) },
         "Bruto": { valor: formatBRL(groups.grossCents), "%": "100%", ticket: formatBRL(tickets.generalCents) },
       });
 
