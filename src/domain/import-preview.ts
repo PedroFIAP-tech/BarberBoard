@@ -221,3 +221,49 @@ export function buildImportPreview(input: PreviewInput): ImportPreview {
     },
   };
 }
+
+// ─── Resumos para a tela ────────────────────────────────────────────────────
+
+export type ImportSummary = {
+  classified: { count: number; totalCents: number };
+  unclassified: { count: number; totalCents: number };
+  total: { count: number; totalCents: number };
+};
+
+/** Quantas visitas entram já com itens e quantas entram "a classificar", com as somas. */
+export function summarizeToImport(visits: Pick<PlannedVisit, "classification" | "totalCents">[]): ImportSummary {
+  const summary: ImportSummary = {
+    classified: { count: 0, totalCents: 0 },
+    unclassified: { count: 0, totalCents: 0 },
+    total: { count: 0, totalCents: 0 },
+  };
+  for (const v of visits) {
+    const bucket = v.classification === "CLASSIFIED" ? summary.classified : summary.unclassified;
+    bucket.count += 1;
+    bucket.totalCents += v.totalCents;
+    summary.total.count += 1;
+    summary.total.totalCents += v.totalCents;
+  }
+  return summary;
+}
+
+export const NO_PROFESSIONAL = "Sem profissional";
+
+/**
+ * Contagem por barbeiro (ex.: pendentes no App Barber: "Paulo: 48 · Luiz: 42").
+ * Comanda com vários profissionais conta para cada um; código sem barbeiro cadastrado aparece
+ * pelo próprio código. Ordem: mais comandas primeiro, empate por nome.
+ */
+export function countByProfessional(
+  rows: Pick<OpenRow, "professionalCodes">[],
+  nameByCode: ReadonlyMap<string, string>,
+): { name: string; count: number }[] {
+  const counts = new Map<string, number>();
+  for (const row of rows) {
+    const names = row.professionalCodes.length > 0 ? row.professionalCodes.map((c) => nameByCode.get(c) ?? c) : [NO_PROFESSIONAL];
+    for (const name of new Set(names)) counts.set(name, (counts.get(name) ?? 0) + 1);
+  }
+  return [...counts]
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "pt-BR"));
+}

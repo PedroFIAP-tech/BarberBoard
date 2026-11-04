@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import type { NormalizedRow } from "@/importers/app-barber/normalize-row";
-import { assertVisitItemsConsistent, buildImportPreview, type PreviewInput } from "./import-preview";
+import {
+  assertVisitItemsConsistent,
+  buildImportPreview,
+  countByProfessional,
+  NO_PROFESSIONAL,
+  summarizeToImport,
+  type PreviewInput,
+} from "./import-preview";
 import type { PriceRuleInput } from "./price-rules";
 
 const NOW = new Date("2026-11-04T15:00:00Z"); // 04/11 12:00 em Brasília
@@ -210,5 +217,68 @@ describe("assertVisitItemsConsistent", () => {
 
   test("a classificar com itens: erro", () => {
     assert.throws(() => assertVisitItemsConsistent({ externalId: "1", classification: "PENDING", totalCents: 4000, items: [item] }));
+  });
+});
+
+describe("summarizeToImport", () => {
+  test("separa com itens e a classificar, com as somas", () => {
+    assert.deepEqual(
+      summarizeToImport([
+        { classification: "CLASSIFIED", totalCents: 4000 },
+        { classification: "CLASSIFIED", totalCents: 5000 },
+        { classification: "PENDING", totalCents: 6500 },
+      ]),
+      {
+        classified: { count: 2, totalCents: 9000 },
+        unclassified: { count: 1, totalCents: 6500 },
+        total: { count: 3, totalCents: 15500 },
+      },
+    );
+  });
+
+  test("lista vazia → zeros", () => {
+    const zero = { count: 0, totalCents: 0 };
+    assert.deepEqual(summarizeToImport([]), { classified: zero, unclassified: zero, total: zero });
+  });
+});
+
+describe("countByProfessional", () => {
+  const names = new Map([
+    ["PH", "Paulo"],
+    ["L.F", "Luiz"],
+  ]);
+
+  test("conta por barbeiro, mais comandas primeiro", () => {
+    const rows = [
+      { professionalCodes: ["PH"] },
+      { professionalCodes: ["L.F"] },
+      { professionalCodes: ["PH"] },
+    ];
+    assert.deepEqual(countByProfessional(rows, names), [
+      { name: "Paulo", count: 2 },
+      { name: "Luiz", count: 1 },
+    ]);
+  });
+
+  test("comanda com vários profissionais conta para cada um (sem contar duas vezes o mesmo)", () => {
+    const rows = [{ professionalCodes: ["PH", "L.F"] }, { professionalCodes: ["PH", "PH"] }];
+    assert.deepEqual(countByProfessional(rows, names), [
+      { name: "Paulo", count: 2 },
+      { name: "Luiz", count: 1 },
+    ]);
+  });
+
+  test("sem profissional e código sem nome", () => {
+    assert.deepEqual(countByProfessional([{ professionalCodes: [] }, { professionalCodes: ["X.Y"] }], names), [
+      { name: NO_PROFESSIONAL, count: 1 },
+      { name: "X.Y", count: 1 },
+    ]);
+  });
+
+  test("empate ordena por nome", () => {
+    assert.deepEqual(
+      countByProfessional([{ professionalCodes: ["PH"] }, { professionalCodes: ["L.F"] }], names).map((b) => b.name),
+      ["Luiz", "Paulo"],
+    );
   });
 });

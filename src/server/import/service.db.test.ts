@@ -9,7 +9,8 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "@/generated/prisma/client";
 import { buildAppBarberXlsx, comanda } from "@/importers/app-barber/test-fixture";
 import { ImportFileError } from "@/importers/app-barber/parse";
-import { confirmImport, createImportPreview, getImportPreview, ImportStateError } from "./service";
+import { getImportView, listRecentImports } from "./queries";
+import { confirmImport, createImportPreview, discardImport, getImportPreview, ImportStateError } from "./service";
 
 const DB_URL = process.env.TEST_DATABASE_URL;
 const isLocal = (() => {
@@ -116,6 +117,23 @@ describe("importação do App Barber (banco)", { skip: !isLocal && "TEST_DATABAS
     assert.equal(preview.counts.importedCount, 5);
   });
 
+  test("tela da prévia: resumo, pendentes por barbeiro, sem Obs", async () => {
+    const view = await getImportView(db, { batchId, now: NOW });
+    assert.equal(view?.kind, "PENDING");
+    if (view?.kind !== "PENDING") return;
+    assert.deepEqual(view.summary, {
+      classified: { count: 2, totalCents: 9000 },
+      unclassified: { count: 2, totalCents: 6500 },
+      total: { count: 4, totalCents: 15500 },
+    });
+    assert.deepEqual(view.openPastByBarber, [{ name: "Luiz", count: 1 }]);
+    assert.deepEqual(view.toImport.map((v) => v.ruleLabel), ["Corte", "Corte e sobrancelha", null, null]);
+    assert.equal(view.review[0].professionals, "Luiz + 1 outro");
+    assert.equal(view.period.from?.toISOString(), "2026-11-03T13:00:00.000Z");
+    assert.equal(JSON.stringify(view).includes("Prefere tesoura"), false, "a Obs não vai para a tela da prévia");
+    assert.deepEqual(view.barbers.map((b) => b.name), ["Luiz", "Paulo"]);
+  });
+
   test("confirmar: cria as visitas com regra, taxa, horário e Obs corretos", async () => {
     const { counts } = await confirmImport(db, { batchId, now: NOW, reviewChoices: new Map([["200000005", ids.paulo]]) });
     assert.equal(counts.importedCount, 5);
@@ -152,6 +170,22 @@ describe("importação do App Barber (banco)", { skip: !isLocal && "TEST_DATABAS
     assert.equal(meta.rows, undefined, "linhas brutas saem do lote ao concluir");
     assert.equal(meta.errors.length, 2);
     assert.equal(meta.period.to, "2026-11-05T13:00:00.000Z");
+  });
+
+  test("tela do resultado: contagens do lote e visitas criadas", async () => {
+    const view = await getImportView(db, { batchId, now: NOW });
+    assert.equal(view?.kind, "COMPLETED");
+    if (view?.kind !== "COMPLETED") return;
+    assert.equal(view.counts.importedCount, 5);
+    assert.deepEqual(view.created, { count: 5, totalCents: 23500, unclassifiedCount: 3 });
+    assert.equal(view.errors.length, 2);
+    const recent = await listRecentImports(db);
+    assert.equal(recent[0].id, batchId);
+    assert.equal(recent[0].status, "COMPLETED");
+  });
+
+  test("lote inexistente → null", async () => {
+    assert.equal(await getImportView(db, { batchId: "naoexiste", now: NOW }), null);
   });
 
   test("confirmar de novo o mesmo lote → erro, nada duplicado", async () => {
@@ -191,6 +225,18 @@ describe("importação do App Barber (banco)", { skip: !isLocal && "TEST_DATABAS
     ]);
     assert.deepEqual(results.map((r) => r.status).sort(), ["fulfilled", "rejected"]);
     assert.equal(await db.appointment.count({ where: { externalId: { in: ["300000001", "300000002"] } } }), 2);
+  });
+
+  test("descartar: apaga só prévia não confirmada", async () => {
+    const { batchId: draft } = await createImportPreview(db, {
+      fileName: "rascunho.xlsx",
+      data: buildAppBarberXlsx([comanda({ Comanda: "400000001" })]),
+      now: NOW,
+    });
+    assert.equal(await discardImport(db, draft), true);
+    assert.equal(await db.importBatch.count({ where: { id: draft } }), 0);
+    assert.equal(await discardImport(db, batchId), false, "lote concluído não é apagado");
+    assert.equal(await db.importBatch.count({ where: { id: batchId } }), 1);
   });
 
   test("invariante: classificada fecha com os itens; a classificar não tem itens", async () => {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import { endOfDayBR, parseDateTimeBR, startOfDayBR, toDayKeyBR, toDbDate } from "./dates";
+import { endOfDayBR, formatDateBR, formatDateTimeBR, parseDateTimeBR, startOfDayBR, toDayKeyBR, toDbDate } from "./dates";
 
 describe("dia em Brasília", () => {
   // 2026-11-04 02:30Z = 03/11 23:30 em Brasília (UTC-3)
@@ -38,5 +38,18 @@ describe("parseDateTimeBR", () => {
     assert.equal(parseDateTimeBR("2026-11-03 16:30"), null);
     assert.equal(parseDateTimeBR("3/11/2026 16:30"), null);
     assert.equal(parseDateTimeBR(""), null);
+  });
+});
+
+describe("formatação em Brasília", () => {
+  const late = new Date("2026-11-04T02:30:00Z"); // 03/11 23:30 em Brasília
+
+  test("formatDateTimeBR", () => {
+    assert.equal(formatDateTimeBR(late), "03/11 23:30");
+    assert.equal(formatDateTimeBR(late, { withYear: true }), "03/11/2026 23:30");
+  });
+
+  test("formatDateBR", () => {
+    assert.equal(formatDateBR(late), "03/11/2026");
   });
 });

@@ -125,7 +125,7 @@ O lançamento manual de atendimentos é uma ação secundária, para visita que 
 
 A importação está dividida em 3 entregas:
 - 3.1: schema, leitor do .xlsx, prévia (lógica pura), serviço e testes (feito)
-- 3.2: tela /importar com upload, prévia e confirmação
+- 3.2: tela /importar com upload, prévia (pendentes por barbeiro, revisão) e confirmação (feito)
 - 3.3: /classificar e regras de valor. Requisitos já combinados:
   - classificar as visitas PENDING com um toque (regras do valor, serviços com o mesmo preço);
   - CORRIGIR os itens de qualquer visita importada (ex.: comanda de R$ 40 que foi barba entrou
@@ -140,7 +140,11 @@ A importação está dividida em 3 entregas:
 - src/server/: única camada que fala com o Prisma (recebe o client como parâmetro)
 - src/lib/: infraestrutura e utilitários (db, money, dates, utils)
 - prisma/: schema, migrations e seed
-- O seed APAGA todos os dados; só roda com SEED_ALLOW_RESET=true
+- O seed APAGA todos os dados; só roda com SEED_ALLOW_RESET=true. Com SEED_VISITS=false cria só os
+  cadastros (barbeiros, catálogo, regras, taxas), para testar a importação real num dev limpo
+- src/app/: rotas e Server Actions finas (validam, chamam src/server, redirecionam)
+- Com cacheComponents ativo, leituras do banco ficam em componentes dentro de <Suspense>,
+  com `await connection()` antes de usar `new Date()`
 - Nunca editar uma migration existente: sempre criar uma nova
 
 ## Testes

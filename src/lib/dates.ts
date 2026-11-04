@@ -25,6 +25,16 @@ export function toDayKeyBR(date: Date | number): string {
   return format(inBR(date), "yyyy-MM-dd");
 }
 
+/** "03/11 16:30" (dia/mês hora:minuto, em Brasília). Com `withYear`: "03/11/2026 16:30". */
+export function formatDateTimeBR(date: Date | number, { withYear = false } = {}): string {
+  return format(inBR(date), withYear ? "dd/MM/yyyy HH:mm" : "dd/MM HH:mm");
+}
+
+/** "03/11/2026" (em Brasília). */
+export function formatDateBR(date: Date | number): string {
+  return format(inBR(date), "dd/MM/yyyy");
+}
+
 const BR_DATE_TIME = /^(\d{2})\/(\d{2})\/(\d{4})(?:\s+(\d{2}):(\d{2})(?::(\d{2}))?)?$/;
 
 /**

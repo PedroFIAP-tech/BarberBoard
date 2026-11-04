@@ -37,7 +37,7 @@ type PendingMeta = {
   unexpectedColumns: string[];
 };
 
-type CompletedMeta = {
+export type CompletedMeta = {
   version: number;
   errors: RowError[];
   warnings: PreviewWarning[];
@@ -50,6 +50,12 @@ const fromStored = (row: StoredRow): NormalizedRow => ({
   ...row,
   scheduledAt: row.scheduledAt ? new Date(row.scheduledAt) : null,
 });
+
+/** Primeiro e último horário (coluna Data) das comandas do arquivo. */
+function periodOf(rows: StoredRow[]): { from: string | null; to: string | null } {
+  const dates = rows.map((r) => r.scheduledAt).filter((d): d is string => d !== null).sort();
+  return { from: dates[0] ?? null, to: dates.at(-1) ?? null };
+}
 
 function readPendingMeta(meta: Prisma.JsonValue | null): PendingMeta {
   const m = meta as PendingMeta | null;
@@ -152,8 +158,19 @@ export async function getImportPreview(
   const batch = await db.importBatch.findUnique({ where: { id: input.batchId } });
   if (!batch) throw new ImportStateError("Importação não encontrada");
   if (batch.status !== "PENDING") throw new ImportStateError("Esta importação já foi concluída");
-  const preview = await previewFromRows(db, readPendingMeta(batch.meta), batch.rowCount, input.now, input.reviewChoices);
-  return { batch: { id: batch.id, fileName: batch.fileName, createdAt: batch.createdAt }, preview };
+  const meta = readPendingMeta(batch.meta);
+  const preview = await previewFromRows(db, meta, batch.rowCount, input.now, input.reviewChoices);
+  return {
+    batch: { id: batch.id, fileName: batch.fileName, createdAt: batch.createdAt },
+    period: periodOf(meta.rows),
+    preview,
+  };
+}
+
+/** Descarta uma prévia não confirmada. Lote já concluído nunca é apagado (devolve false). */
+export async function discardImport(db: Db, batchId: string): Promise<boolean> {
+  const { count } = await db.importBatch.deleteMany({ where: { id: batchId, status: "PENDING" } });
+  return count > 0;
 }
 
 export async function confirmImport(
@@ -200,13 +217,12 @@ export async function confirmImport(
         if (items.length > 0) await tx.appointmentItem.createMany({ data: items });
       }
 
-      const scheduled = meta.rows.map((r) => r.scheduledAt).filter((d): d is string => d !== null).sort();
       const completed: CompletedMeta = {
         version: META_VERSION,
         errors: preview.errors,
         warnings: preview.warnings,
         unexpectedColumns: meta.unexpectedColumns,
-        period: { from: scheduled[0] ?? null, to: scheduled.at(-1) ?? null },
+        period: periodOf(meta.rows),
       };
       await tx.importBatch.update({
         where: { id: batch.id },

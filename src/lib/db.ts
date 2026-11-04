@@ -15,8 +15,11 @@ function createPrismaClient() {
 // evitando abrir uma conexão nova a cada alteração de arquivo.
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
 
-export const db = globalForPrisma.prisma ?? createPrismaClient();
-
-if (process.env.NODE_ENV !== "production") {
-  globalForPrisma.prisma = db;
+/**
+ * Client do Prisma da aplicação. Criado no primeiro uso (e não ao importar o módulo),
+ * para que o `next build` funcione mesmo sem DATABASE_URL no ambiente de build.
+ */
+export function getDb(): PrismaClient {
+  if (!globalForPrisma.prisma) globalForPrisma.prisma = createPrismaClient();
+  return globalForPrisma.prisma;
 }

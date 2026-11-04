@@ -6,6 +6,11 @@
  *
  *   SEED_ALLOW_RESET=true pnpm db:seed
  *
+ * Com SEED_VISITS=false, cria só os cadastros (barbeiros, catálogo, regras, taxas, categorias),
+ * sem visitas, despesas nem fechamentos fictícios: um dev limpo para testar a importação real.
+ *
+ *   SEED_ALLOW_RESET=true SEED_VISITS=false pnpm db:seed
+ *
  * Os dados são gerados por um PRNG com semente fixa: para a mesma data de execução,
  * o resultado é sempre o mesmo. As datas são relativas a "hoje" para o dashboard
  * sempre ter dados recentes. Preços são provisórios (a confirmar com o barbeiro).
@@ -53,6 +58,7 @@ if (!connectionString) {
 }
 
 const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString }) });
+const WITH_VISITS = process.env.SEED_VISITS !== "false";
 
 // ─── Gerador pseudoaleatório determinístico ─────────────────────────────────
 
@@ -280,6 +286,18 @@ async function main() {
         ruleIdByLabel.set(rule.label, created.id);
       }
       const visitTypeWeights = VISIT_TYPES.map((t) => [t, t.weight] as const);
+
+      if (!WITH_VISITS) {
+        console.log("\nSEED_VISITS=false: só cadastros, sem visitas, despesas nem fechamentos fictícios.");
+        console.table({
+          "Barbeiros": barbers.length,
+          "Serviços (principal + extra)": services.length,
+          "Produtos (fictícios)": products.length,
+          "Regras de valor": PRICE_RULES.length,
+          "Categorias de despesa": categories.length,
+        });
+        return;
+      }
 
       // 3. Visitas e itens.
       const appointmentRows: AppointmentRow[] = [];
