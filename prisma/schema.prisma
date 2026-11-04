@@ -1,0 +1,232 @@
+// BarberBoard — schema do MVP
+//
+// Convenções:
+// - Valores monetários em CENTAVOS (Int). Ex.: R$ 45,90 = 4590.
+// - Taxas em BASIS POINTS (Int). Ex.: 1,99% = 199.
+// - Instantes (data + hora) em timestamptz; datas de calendário em @db.Date.
+// - Tabelas e colunas em snake_case no banco, camelCase no código.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Enums ──────────────────────────────────────────────────────────────────
+
+enum PaymentMethod {
+  PIX
+  CASH
+  DEBIT
+  CREDIT
+}
+
+/// Origem do lançamento: digitado no BarberBoard ou importado do App Barber.
+enum EntrySource {
+  MANUAL
+  APP_BARBER
+}
+
+/// Serviço (principal) ou Extra. Os relatórios quebram o faturamento em
+/// Serviço (MAIN), Extra (EXTRA) e Produto.
+enum ServiceCategory {
+  MAIN
+  EXTRA
+}
+
+enum ImportStatus {
+  PENDING
+  COMPLETED
+  FAILED
+}
+
+// ─── Cadastros ──────────────────────────────────────────────────────────────
+
+model Barber {
+  id            String   @id @default(cuid())
+  name          String
+  /// Como o barbeiro aparece na coluna "Profissional" do App Barber (ex.: "PH", "L.F").
+  appBarberCode String?  @unique @map("app_barber_code")
+  active        Boolean  @default(true)
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  appointments Appointment[]
+  expenses     Expense[]
+
+  @@map("barbers")
+}
+
+model Service {
+  id                String          @id @default(cuid())
+  name              String          @unique
+  category          ServiceCategory @default(MAIN)
+  defaultPriceCents Int             @map("default_price_cents")
+  durationMin       Int?            @map("duration_min")
+  active            Boolean         @default(true)
+  sortOrder         Int             @default(0) @map("sort_order")
+  createdAt         DateTime        @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt         DateTime        @updatedAt @map("updated_at") @db.Timestamptz
+
+  items AppointmentItem[]
+
+  @@map("services")
+}
+
+/// Produtos vendidos no balcão (pomada, óleo...). Sem controle de estoque por enquanto.
+model Product {
+  id         String   @id @default(cuid())
+  name       String   @unique
+  priceCents Int      @map("price_cents")
+  /// Preço de custo (opcional). Produto sem custo fica fora do cálculo de margem.
+  costCents  Int?     @map("cost_cents")
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  items AppointmentItem[]
+
+  @@map("products")
+}
+
+/// Taxa da maquininha por forma de pagamento (uma linha por método).
+model PaymentFee {
+  id        String        @id @default(cuid())
+  method    PaymentMethod @unique
+  feeBps    Int           @default(0) @map("fee_bps")
+  createdAt DateTime      @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime      @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@map("payment_fees")
+}
+
+model ExpenseCategory {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  active    Boolean  @default(true)
+  sortOrder Int      @default(0) @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  expenses Expense[]
+
+  @@map("expense_categories")
+}
+
+// ─── Movimento ──────────────────────────────────────────────────────────────
+
+/// Uma VISITA do cliente (pode ter vários itens). Ticket médio = soma(totalCents) / nº de visitas.
+/// feeBps/feeCents/netCents são congelados no lançamento: mudar a taxa depois não altera o histórico.
+model Appointment {
+  id            String        @id @default(cuid())
+  performedAt   DateTime      @map("performed_at") @db.Timestamptz
+  barberId      String        @map("barber_id")
+  paymentMethod PaymentMethod @map("payment_method")
+  feeBps        Int           @map("fee_bps")
+  totalCents    Int           @map("total_cents")
+  feeCents      Int           @map("fee_cents")
+  netCents      Int           @map("net_cents")
+  notes         String?
+  source        EntrySource   @default(MANUAL)
+  externalId    String?       @map("external_id")
+  importBatchId String?       @map("import_batch_id")
+  createdAt     DateTime      @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt     DateTime      @updatedAt @map("updated_at") @db.Timestamptz
+
+  barber      Barber            @relation(fields: [barberId], references: [id], onDelete: Restrict)
+  importBatch ImportBatch?      @relation(fields: [importBatchId], references: [id], onDelete: SetNull)
+  items       AppointmentItem[]
+
+  @@unique([source, externalId])
+  @@index([performedAt])
+  @@index([barberId, performedAt])
+  @@map("appointments")
+}
+
+/// Cada serviço OU produto de uma visita.
+/// Exatamente um entre serviceId e productId é preenchido — garantido por CHECK
+/// constraint escrita à mão na migration (o Prisma não gera CHECK).
+/// Preço e custo ficam congelados no lançamento: mudar o catálogo não altera o histórico.
+model AppointmentItem {
+  id             String   @id @default(cuid())
+  appointmentId  String   @map("appointment_id")
+  serviceId      String?  @map("service_id")
+  productId      String?  @map("product_id")
+  quantity       Int      @default(1)
+  unitPriceCents Int      @map("unit_price_cents")
+  /// Custo unitário do produto no momento da venda (null em serviços e em produto sem custo).
+  unitCostCents  Int?     @map("unit_cost_cents")
+  totalCents     Int      @map("total_cents")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  appointment Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  service     Service?    @relation(fields: [serviceId], references: [id], onDelete: Restrict)
+  product     Product?    @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@index([appointmentId])
+  @@index([serviceId])
+  @@index([productId])
+  @@map("appointment_items")
+}
+
+model Expense {
+  id          String   @id @default(cuid())
+  date        DateTime @db.Date
+  categoryId  String   @map("category_id")
+  amountCents Int      @map("amount_cents")
+  description String?
+  /// Opcional: usado para comissão paga a um barbeiro.
+  barberId    String?  @map("barber_id")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  category ExpenseCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  barber   Barber?         @relation(fields: [barberId], references: [id], onDelete: SetNull)
+
+  @@index([date])
+  @@index([categoryId, date])
+  @@map("expenses")
+}
+
+/// Conferência de caixa do dia. Guarda o snapshot do que era esperado em dinheiro
+/// e do que foi contado na gaveta. Bruto/líquido/ticket são calculados dos atendimentos.
+model CashClosing {
+  id                String   @id @default(cuid())
+  date              DateTime @unique @db.Date
+  /// Fundo de troco que já estava na gaveta no início do dia.
+  openingCashCents  Int      @default(0) @map("opening_cash_cents")
+  /// openingCashCents + atendimentos em dinheiro do dia.
+  expectedCashCents Int      @map("expected_cash_cents")
+  countedCashCents  Int      @map("counted_cash_cents")
+  /// counted - expected (negativo = faltou dinheiro).
+  differenceCents   Int      @map("difference_cents")
+  notes             String?
+  closedAt          DateTime @default(now()) @map("closed_at") @db.Timestamptz
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@map("cash_closings")
+}
+
+// ─── Importação (estrutura preparada, implementação futura) ─────────────────
+
+model ImportBatch {
+  id         String       @id @default(cuid())
+  source     EntrySource
+  fileName   String       @map("file_name")
+  status     ImportStatus @default(PENDING)
+  rowCount   Int          @default(0) @map("row_count")
+  errorCount Int          @default(0) @map("error_count")
+  /// Metadados livres do arquivo importado (colunas detectadas, erros por linha...).
+  meta       Json?
+  createdAt  DateTime     @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt  DateTime     @updatedAt @map("updated_at") @db.Timestamptz
+
+  appointments Appointment[]
+
+  @@map("import_batches")
+}

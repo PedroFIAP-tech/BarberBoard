@@ -1,0 +1,115 @@
+# Projeto: BarberBoard
+
+## Contexto
+Estou criando o BarberBoard, um web app de fechamento de caixa para uma barbearia.
+Hoje o barbeiro agenda os clientes pelo App Barber (app de terceiros, que vai continuar sendo usado)
+e faz o controle financeiro numa planilha. O BarberBoard vai substituir essa planilha com
+fechamento de caixa e dashboard. No futuro, vai importar o histórico de comandas exportado do
+App Barber (formato descrito abaixo); por enquanto os lançamentos são manuais.
+
+As planilhas de referência ficam em docs/referencia/ e não são versionadas:
+- RELATORIO-DIARIO.xlsx e PLANILHA-INDICADORES.xlsx: modelos de outras barbearias, com nomes e valores
+  fictícios. Vale só a lógica delas; não usar nomes nem valores no código ou no seed.
+- AppBarber-Historico-30dias.xlsx: exportação real do App Barber, com dados de clientes.
+  Nunca copiar o conteúdo dela para o código, o seed ou os commits.
+
+## Stack
+- Next.js 16 (App Router) + TypeScript
+- Tailwind CSS 4 + shadcn/ui
+- Prisma 7 + PostgreSQL no Supabase. O projeto Supabase atual é o banco de DEV; produção será
+  um projeto Supabase separado, criado no deploy.
+- Recharts para os gráficos
+- date-fns (+ @date-fns/tz, fuso America/Sao_Paulo) e zod
+- pnpm
+- Deploy futuro na Vercel
+- Interface em português (pt-BR), valores em R$, mobile-first (o barbeiro vai usar no celular)
+
+## Regras de negócio
+- Barbeiros: 2, Paulo e Luiz. O Luiz atende a maior parte das visitas (~75%).
+  Barber.appBarberCode liga o barbeiro à coluna "Profissional" do App Barber
+  (Paulo → "PH", Luiz → "L.F").
+- Dias: fecha na segunda. Domingo: ainda a confirmar (a exportação de 30 dias não tem nenhuma
+  comanda no domingo).
+- Comissão: ainda não definida. A categoria de despesa "Comissão" existe para lançamento manual.
+- Visita (Appointment) = um cliente atendido. Cada serviço ou produto da visita é um AppointmentItem.
+  Uma visita só com produto também conta como cliente.
+- O faturamento é sempre quebrado em 3 grupos:
+  - Serviço: itens com serviço de categoria MAIN (corte, barba, combo, pigmentação)
+  - Extra: itens com serviço de categoria EXTRA (sobrancelha, pezinho, depilação, hidratação,
+    selagem, contorno, limpeza...)
+  - Produto: itens com produto (pomada, óleo...)
+- Bruto = Serviço + Extra + Produto. Sempre calculado, nunca digitado.
+- Ticket médio = bruto / nº de visitas (0 quando não há visitas). No mês ou no ano é o bruto do
+  período dividido pelas visitas do período, não a média dos tickets diários.
+  Ticket por grupo: Serviço, Extra e Produto, cada um dividido pelo mesmo nº de visitas.
+- Taxas da maquininha em basis points por forma de pagamento.
+- Preço, custo e taxa ficam congelados no lançamento (AppointmentItem.unitPriceCents/unitCostCents,
+  Appointment.feeBps): mudar o catálogo não altera o histórico.
+- Produtos têm preço de custo opcional. Margem = venda - custo; produto sem custo fica fora da margem.
+- Lucro líquido = receitas - despesas - taxas.
+- Desativar (active = false) é o único jeito de "excluir" serviço, produto ou barbeiro:
+  some do lançamento, mas continua no histórico.
+
+## Funcionalidades do MVP
+1. Catálogo: serviços (categoria Principal/Extra, preço, duração) e produtos (preço de venda e de custo)
+2. Lançamento manual de atendimentos (ação secundária, para visita que não passou pelo App Barber):
+   data/hora, itens (serviços e produtos), forma de pagamento (Pix, dinheiro, débito, crédito),
+   barbeiro e observação
+3. Lançamento de despesas: categoria (aluguel, produtos, luz, comissão, outros), valor, data
+4. Taxas da maquininha configuráveis por forma de pagamento, para calcular o valor líquido
+5. Fechamento do dia: bruto por grupo (Serviço/Extra/Produto), líquido, nº de visitas, ticket médio,
+   total por forma de pagamento e conferência de caixa (valor contado na gaveta x esperado em dinheiro)
+6. Dashboard mensal e anual: faturamento e ticket por grupo, lucro líquido, margem de produtos,
+   serviços e extras mais vendidos, dias e horários mais fortes, comparativo com o período anterior
+7. Login simples para proteger os dados (pode ficar para depois)
+8. Importação do histórico de comandas do App Barber (formato abaixo): principal forma de
+   registrar as visitas
+
+## Formato da exportação do App Barber
+Caminho no app: Comandas → Histórico de Comandas → filtro "Clientes" → botão Excel.
+- Uma aba, uma linha por comanda, 15 colunas: Comanda, Cartão, Status, Data, Valor, Cliente, Obs,
+  Tipo Pagamento, Cadastro, Profissional, Finalização, Data Finalização, Inserção, Em caixa, Data Caixa.
+- Tudo vem como texto: Valor "100,00"; datas "03/11/2026 16:30" (Data Caixa só "03/11/2026"),
+  no fuso de Brasília.
+- O styles.xml vem malformado (o openpyxl nem abre): usar uma lib que ignore estilos.
+- Traz só o total da comanda, não os itens. Ainda não se sabe se dá para exportar os itens.
+- "Comanda" é um número único: usar como Appointment.externalId (source = APP_BARBER).
+- Pontos a decidir na etapa de importação (vistos na exportação de 30 dias):
+  - Status: Fechada, Aberta ou Cancelada. Só as Fechadas têm Tipo Pagamento e Data Finalização.
+  - Nenhuma comanda do PH (Paulo) aparece como Fechada (são todas Abertas ou Canceladas), e há muitas
+    Abertas com data passada: o status não basta para saber o que foi atendido.
+  - Profissional pode vir combinado (ex.: "L.F + 1"), ou seja, mais de um barbeiro na comanda.
+  - Existem comandas Fechadas com valor 0,00.
+  - Tipo Pagamento: "PIX", "Dinheiro", "Cartão de Débito", "Cartão de Crédito".
+  - "Data" é o horário agendado; "Inserção" é quando a comanda foi criada.
+
+## Fora do escopo por enquanto
+- Metas por barbeiro (a planilha tem; não criar model nem lógica de meta)
+- Comissão automática
+- Controle de estoque
+- Recorrência x avulso (não há plano de assinatura) e taxa de ocupação
+
+## Roadmap de telas
+1. Importação do histórico de comandas do App Barber (/importar)
+2. Fechamento do dia
+3. Catálogo (/catalogo, abas Serviços e Produtos)
+4. Dashboard
+
+O lançamento manual de atendimentos é uma ação secundária, para visita que não passou pelo App Barber.
+
+## Organização do código
+- src/domain/: cálculos puros (sem Prisma nem React), recebem dados e devolvem números
+  (pricing.ts: valores da visita; reports.ts: grupos, ticket, margem)
+- src/lib/: infraestrutura e utilitários (db, money, dates, utils)
+- prisma/: schema, migrations e seed
+- O seed APAGA todos os dados; só roda com SEED_ALLOW_RESET=true
+- Nunca editar uma migration existente: sempre criar uma nova
+
+## Como quero que você trabalhe
+- Analise antes de mudar qualquer coisa e explique o plano antes de executar
+- Faça mudanças pequenas e direcionadas, uma etapa por vez
+- Sempre mostre o código completo dos arquivos alterados, não só trechos
+- Use valores monetários em centavos (Int) no banco para evitar erro de arredondamento
+- Organize o código de forma limpa: lógica de cálculo separada dos componentes
+- Não rode nada no Supabase sem eu pedir: valide num Postgres temporário (Docker)
+- Não faça commit sem eu pedir
