@@ -6,6 +6,7 @@ import { CashCheckForm } from "@/components/closing/cash-check-form";
 import { DayNav } from "@/components/closing/day-nav";
 import { DaySummaryView } from "@/components/closing/day-summary";
 import { DayVisits } from "@/components/closing/day-visits";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { buttonVariants } from "@/components/ui/button";
 import { isValidDayKey, toDayKeyBR, weekdayOfDayKey } from "@/lib/dates";
 import { getDb } from "@/lib/db";
@@ -22,7 +23,7 @@ export default function FechamentoPage({ searchParams }: PageProps<"/fechamento"
 }
 
 async function DayClosing({ searchParams }: { searchParams: PageProps<"/fechamento">["searchParams"] }) {
-  const { dia } = await searchParams;
+  const { dia, lancada, excluida } = await searchParams;
   await connection(); // "hoje" depende do relógio da requisição
   const today = toDayKeyBR(new Date());
   const dayKey = isValidDayKey(dia) ? dia : today;
@@ -33,6 +34,12 @@ async function DayClosing({ searchParams }: { searchParams: PageProps<"/fechamen
     <div className="space-y-4">
       <h1 className="sr-only">Fechamento do dia</h1>
       <DayNav dayKey={dayKey} today={today} />
+
+      {(lancada === "1" || excluida === "1") && (
+        <Alert>
+          <AlertDescription>{lancada === "1" ? "Visita lançada." : "Visita excluída."}</AlertDescription>
+        </Alert>
+      )}
 
       {empty ? (
         <div className="space-y-3 rounded-xl border bg-card p-5 text-center">
@@ -54,6 +61,10 @@ async function DayClosing({ searchParams }: { searchParams: PageProps<"/fechamen
           <DayVisits visits={view.visits} />
         </>
       )}
+
+      <Link href={`/visitas/nova?dia=${dayKey}`} className={buttonVariants({ variant: "outline", className: "h-11 w-full" })}>
+        + Lançar visita (fora do App Barber)
+      </Link>
 
       {(!empty || view.closing) && (
         <CashCheckForm

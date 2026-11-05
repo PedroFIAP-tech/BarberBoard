@@ -3,18 +3,20 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { connection } from "next/server";
 import { Suspense } from "react";
-import { unclassifyVisitAction } from "@/app/visitas/actions";
+import { deleteManualVisitAction, unclassifyVisitAction } from "@/app/visitas/actions";
 import { OneTapOptions } from "@/components/classify/option-buttons";
 import { rowsFromItems } from "@/components/items/editor-rows";
+import { ManualVisitForm } from "@/components/items/manual-visit-form";
 import { VisitItemsForm } from "@/components/items/visit-items-form";
 import { Row, RowList } from "@/components/parts";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { formatDateTimeBR, toDayKeyBR } from "@/lib/dates";
+import { formatDateTimeBR, formatTimeBR, toDayKeyBR } from "@/lib/dates";
 import { getDb } from "@/lib/db";
 import { PAYMENT_METHOD_LABELS } from "@/lib/labels";
 import { formatBps, formatBRL } from "@/lib/money";
+import { listFees } from "@/server/catalog";
 import { getEditorCatalog, getOptionsForAmount, hasActiveRuleFor } from "@/server/classify";
 import { getVisitDetail } from "@/server/visits";
 
@@ -44,14 +46,18 @@ async function VisitDetail({
   if (!visit) notFound();
 
   const pending = visit.classification === "PENDING";
-  const [catalog, options, ruleExists] = await Promise.all([
+  const manual = visit.source === "MANUAL";
+  const [catalog, options, ruleExists, barbers, fees] = await Promise.all([
     getEditorCatalog(db, {
       serviceIds: visit.items.flatMap((i) => (i.serviceId ? [i.serviceId] : [])),
       productIds: visit.items.flatMap((i) => (i.productId ? [i.productId] : [])),
     }),
     getOptionsForAmount(db, visit.totalCents),
     hasActiveRuleFor(db, visit.totalCents),
+    manual ? db.barber.findMany({ where: { OR: [{ active: true }, { id: visit.barberId }] }, orderBy: { name: "asc" }, select: { id: true, name: true } }) : [],
+    manual ? listFees(db) : [],
   ]);
+  const dayKey = toDayKeyBR(visit.performedAt);
   const returnTo = `/visitas/${visit.id}`;
 
   const editor = (
@@ -67,7 +73,7 @@ async function VisitDetail({
   return (
     <div className="space-y-4">
       <header>
-        <Link href={`/fechamento?dia=${toDayKeyBR(visit.performedAt)}`} className="text-sm text-muted-foreground">
+        <Link href={`/fechamento?dia=${dayKey}`} className="text-sm text-muted-foreground">
           ‹ Fechamento do dia
         </Link>
         <h1 className="mt-1 text-2xl font-semibold tabular-nums">{formatBRL(visit.totalCents)}</h1>
@@ -130,6 +136,37 @@ async function VisitDetail({
               />
             ))}
           </RowList>
+          {manual ? (
+            <details className="border-t py-2">
+              <summary className="cursor-pointer py-2 text-sm font-medium">Editar visita</summary>
+              <div className="space-y-3 pt-2">
+                <ManualVisitForm
+                  visitId={visit.id}
+                  catalog={catalog}
+                  barbers={barbers}
+                  feeBpsByMethod={Object.fromEntries(fees.map((f) => [f.method, f.feeBps])) as Record<typeof visit.paymentMethod, number>}
+                  initial={{
+                    date: dayKey,
+                    time: formatTimeBR(visit.performedAt),
+                    barberId: visit.barberId,
+                    paymentMethod: visit.paymentMethod,
+                    rows: rowsFromItems(visit.items),
+                    notes: visit.notes ?? "",
+                  }}
+                />
+                <details>
+                  <summary className="flex h-11 cursor-pointer list-none items-center justify-center text-sm text-destructive [&::-webkit-details-marker]:hidden">
+                    Excluir visita…
+                  </summary>
+                  <form action={deleteManualVisitAction.bind(null, visit.id, dayKey)}>
+                    <Button type="submit" variant="destructive" className="h-11 w-full">
+                      Confirmar exclusão de {formatBRL(visit.totalCents)}
+                    </Button>
+                  </form>
+                </details>
+              </div>
+            </details>
+          ) : (
           <details className="border-t py-2">
             <summary className="cursor-pointer py-2 text-sm font-medium">Corrigir itens</summary>
             <div className="space-y-3 pt-2">
@@ -148,6 +185,7 @@ async function VisitDetail({
               )}
             </div>
           </details>
+          )}
         </section>
       )}
 

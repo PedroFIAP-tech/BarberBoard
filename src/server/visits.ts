@@ -8,6 +8,7 @@ type Db = PrismaClient | Prisma.TransactionClient;
 export type VisitDetailView = {
   id: string;
   performedAt: Date;
+  barberId: string;
   barberName: string;
   paymentMethod: PaymentMethodValue;
   totalCents: number;
@@ -38,6 +39,7 @@ export async function getVisitDetail(db: Db, id: string): Promise<VisitDetailVie
     select: {
       id: true,
       performedAt: true,
+      barberId: true,
       paymentMethod: true,
       totalCents: true,
       feeBps: true,
@@ -69,6 +71,7 @@ export async function getVisitDetail(db: Db, id: string): Promise<VisitDetailVie
   return {
     id: v.id,
     performedAt: v.performedAt,
+    barberId: v.barberId,
     barberName: v.barber.name,
     paymentMethod: v.paymentMethod,
     totalCents: v.totalCents,

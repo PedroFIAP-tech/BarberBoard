@@ -138,12 +138,15 @@ O plano completo de cada etapa está em docs/PLANO-MVP.md. Andamento:
 - [x] Etapa 2: Classificar e corrigir visitas (/classificar, /visitas/[id], /regras)
 - [x] Etapa 3: Catálogo e taxas (/catalogo, abas Serviços · Produtos · Taxas)
 - [x] Etapa 4: Despesas (/despesas, por mês, com categorias)
-- [ ] Etapa 5: Lançamento manual de visita (/visitas/nova)
+- [x] Etapa 5: Lançamento manual de visita (/visitas/nova; editar/excluir na tela da visita)
 - [ ] Etapa 6: Dashboard (/dashboard)
 - [ ] Etapa 7: Login (obrigatório antes de produção)
 - [ ] Etapa 8: Produção (Supabase de produção, Vercel, PWA, backup)
 
-O lançamento manual de atendimentos é uma ação secundária, para visita que não passou pelo App Barber.
+O lançamento manual de atendimentos é uma ação secundária, para visita que não passou pelo App Barber
+(botão "+ Lançar visita" no Fechamento). Total = soma dos itens; taxa do catálogo congelada. Só visita
+MANUAL pode ser editada por inteiro ou excluída: a importada só tem os itens corrigidos (excluí-la não
+adiantaria, ela voltaria na próxima importação).
 
 ## Organização do código
 - src/domain/: cálculos puros (sem Prisma nem React), recebem dados e devolvem números

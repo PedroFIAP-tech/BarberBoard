@@ -5,6 +5,7 @@ import {
   endOfDayBR,
   formatDateBR,
   formatDateTimeBR,
+  instantFromDayAndTime,
   dayKeyFromDbDate,
   formatMonthLongBR,
   isValidMonthKey,
@@ -135,4 +136,11 @@ describe("mês", () => {
   test("formatMonthLongBR", () => {
     assert.equal(formatMonthLongBR("2026-11"), "novembro de 2026");
   });
+});
+
+test("instantFromDayAndTime", () => {
+  assert.equal(instantFromDayAndTime("2026-11-04", "16:30")?.toISOString(), "2026-11-04T19:30:00.000Z");
+  assert.equal(instantFromDayAndTime("2026-11-04", "24:00"), null);
+  assert.equal(instantFromDayAndTime("2026-02-30", "10:00"), null);
+  assert.equal(instantFromDayAndTime("2026-11-04", "9:00"), null);
 });

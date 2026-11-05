@@ -156,3 +156,10 @@ export function formatMonthLongBR(key: string): string {
   const [y, m] = key.split("-").map(Number);
   return format(new TZDate(y, m - 1, 15, 12, 0, 0, 0, TZ), "MMMM 'de' yyyy", { locale: ptBR });
 }
+
+/** Dia "aaaa-mm-dd" + hora "HH:mm" (em Brasília) → instante. null se algum dos dois for inválido. */
+export function instantFromDayAndTime(dayKey: string, time: string): Date | null {
+  if (!isValidDayKey(dayKey) || !/^\d{2}:\d{2}$/.test(time)) return null;
+  const [y, m, d] = dayKey.split("-");
+  return parseDateTimeBR(`${d}/${m}/${y} ${time}`);
+}
