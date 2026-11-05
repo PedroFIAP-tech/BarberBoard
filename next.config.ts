@@ -1,14 +1,18 @@
 import type { NextConfig } from "next";
 
-// No GitHub Codespaces o navegador acessa https://<codespace>-<porta>.app.github.dev, mas o
-// servidor pode receber Host = localhost. O Next recusa Server Actions quando o Origin não bate
-// com o host (proteção contra CSRF). Liberamos SÓ o endereço deste Codespace, e só dentro dele;
-// na Vercel/produção essas variáveis não existem e nada muda.
-// O curinga do Next substitui um rótulo inteiro do host, então listamos as portas exatas.
+// No GitHub Codespaces, o proxy da porta encaminha a requisição com x-forwarded-host =
+// <codespace>-3000.app.github.dev e reescreve o Origin para localhost:3000. Como os dois não batem,
+// o Next recusa a Server Action (proteção contra CSRF). Só DENTRO de um Codespace, liberamos essas
+// origens; na Vercel/produção as variáveis não existem e a verificação padrão continua valendo.
 const { CODESPACES, CODESPACE_NAME, GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN: CODESPACE_DOMAIN } = process.env;
+const ports = [...new Set(["3000", process.env.PORT ?? "3000"])];
 const codespaceOrigins =
   CODESPACES === "true" && CODESPACE_NAME && CODESPACE_DOMAIN
-    ? [...new Set(["3000", process.env.PORT ?? "3000"])].map((port) => `${CODESPACE_NAME}-${port}.${CODESPACE_DOMAIN}`)
+    ? [
+        ...ports.map((port) => `localhost:${port}`),
+        // O curinga do Next substitui um rótulo inteiro do host, então listamos as portas exatas.
+        ...ports.map((port) => `${CODESPACE_NAME}-${port}.${CODESPACE_DOMAIN}`),
+      ]
     : [];
 
 const nextConfig: NextConfig = {
