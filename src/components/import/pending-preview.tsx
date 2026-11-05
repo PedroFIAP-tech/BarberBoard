@@ -69,13 +69,20 @@ export function PendingPreview({ view }: { view: PendingImportView }) {
         </Section>
       )}
 
+      {view.openTodayByBarber.length > 0 && (
+        <p className="rounded-xl border bg-card px-4 py-3 text-sm text-muted-foreground">
+          Em andamento hoje (ainda abertas, fecham no fim do dia):{" "}
+          {view.openTodayByBarber.map((b) => `${b.name}: ${b.count}`).join(" · ")}
+        </p>
+      )}
+
       {view.openPast.length > 0 && (
-        <Section title="Pendentes no App Barber" count={view.openPast.length} defaultOpen tone="warning">
+        <Section title="Pendentes de dias anteriores" count={view.openPast.length} defaultOpen tone="warning">
           <p className="text-sm font-medium">
             {view.openPastByBarber.map((b) => `${b.name}: ${b.count}`).join(" · ")}
           </p>
           <p className="mt-1 mb-2 text-xs text-muted-foreground">
-            Comandas abertas com data que já passou. Finalize estas comandas no App Barber e importe de novo.
+            Comandas de dias anteriores ainda abertas. Finalize estas comandas no App Barber e importe de novo.
           </p>
           <details>
             <summary className="cursor-pointer text-xs text-muted-foreground">Ver comandas</summary>
@@ -116,6 +123,24 @@ export function PendingPreview({ view }: { view: PendingImportView }) {
         </Section>
       )}
 
+      {view.toConfirmByBarber.map((b) => (
+        <p key={b.name} className="rounded-xl border bg-card px-4 py-3 text-sm">
+          <span className="font-medium">
+            {plural(b.count, `comanda do ${b.name}`, `comandas do ${b.name}`)} a confirmar ({formatBRL(b.totalCents)})
+          </span>
+          <span className="mt-0.5 block text-xs text-muted-foreground">
+            Não entram no faturamento agora: o {b.name} confirma cada uma (pagamento, clube ou &quot;não veio&quot;) no
+            lançamento do dia.
+          </span>
+        </p>
+      ))}
+      {(view.confirmUpdatedCount > 0 || view.confirmCancelledCount > 0) && (
+        <p className="px-1 text-xs text-muted-foreground">
+          Comandas a confirmar que mudaram no App Barber: {plural(view.confirmUpdatedCount, "atualizada", "atualizadas")} ·{" "}
+          {plural(view.confirmCancelledCount, "cancelada", "canceladas")}
+        </p>
+      )}
+
       <p className="px-1 text-xs text-muted-foreground">
         Fora da importação: {plural(view.duplicateCount, "já importada", "já importadas")} ·{" "}
         {plural(view.openFutureCount, "agendada", "agendadas")} · {plural(view.cancelledCount, "cancelada", "canceladas")}
@@ -124,6 +149,8 @@ export function PendingPreview({ view }: { view: PendingImportView }) {
       <ConfirmForm
         batchId={view.batch.id}
         baseCount={summary.total.count}
+        toConfirmCount={view.toConfirmByBarber.reduce((sum, b) => sum + b.count, 0)}
+        confirmChanges={view.confirmUpdatedCount + view.confirmCancelledCount}
         review={view.review}
         barbers={view.barbers}
       />

@@ -2,13 +2,19 @@
 //
 //   Fechada nova, profissional conhecido ...... importa (itens pela regra, ou "a classificar")
 //   Fechada já importada (mesmo externalId) ... não duplica
+//   Só de barbeiro que não fecha comanda ...... "a confirmar" (Paulo): Aberta (qualquer data) ou
+//                                               Fechada viram PendingConfirmation, não visita
+//   Já é "a confirmar" (mesma comanda) ........ PENDING: atualiza horário/valor ou cancela;
+//                                               confirmada/clube/não veio/cancelada: nunca volta
 //   Fechada com vários profissionais .......... revisar: o usuário escolhe o barbeiro
+//     (se, tirando os barbeiros manuais, sobra um só que importa → entra com ele, com aviso)
 //   Aberta com data passada ................... pendente: "finalize no App Barber"
 //   Aberta com data futura .................... agendada (só conta)
 //   Cancelada ................................. ignorada
 //   Profissional desconhecido / dado inválido . erro
 
 import type { NormalizedRow, PaymentMethodValue, RowError } from "@/importers/app-barber/normalize-row";
+import { toDayKeyBR } from "@/lib/dates";
 import { calcFee } from "./pricing";
 import { itemsFromRule, suggestForAmount, type ItemDraft, type PriceRuleInput } from "./price-rules";
 
@@ -60,16 +66,44 @@ export type PreviewCounts = {
   openFutureCount: number;
   cancelledCount: number;
   reviewCount: number;
+  /** Comandas NOVAS que vão para "a confirmar". */
+  toConfirmCount: number;
   errorCount: number;
+};
+
+export type ConfirmationStatusValue = "PENDING" | "CONFIRMED" | "CLUB" | "NO_SHOW" | "CANCELLED";
+
+/** Comanda de barbeiro que não fecha comanda: vira PendingConfirmation (não conta em nenhuma soma). */
+export type PlannedConfirmation = {
+  rowNumber: number;
+  externalId: string;
+  barberId: string;
+  barberName: string;
+  scheduledAt: Date;
+  valueCents: number;
+  notes: string | null;
+  /** Só quando a comanda veio Fechada. */
+  paymentMethodHint: PaymentMethodValue | null;
+  /** Regra de valor que se aplicaria (só para exibir; é reaplicada ao confirmar). */
+  suggestedRuleLabel: string | null;
 };
 
 export type ImportPreview = {
   toImport: PlannedVisit[];
   duplicates: DuplicateRow[];
+  /** Abertas de DIAS ANTERIORES: pendentes, "finalize no App Barber". */
   openPast: OpenRow[];
+  /** Abertas de HOJE com horário já passado: em andamento (o Luiz fecha no fim do dia). */
+  openToday: OpenRow[];
   openFuture: OpenRow[];
   cancelled: RowRef[];
   review: ReviewRow[];
+  /** Comandas novas "a confirmar" (barbeiro que não fecha comanda). */
+  toConfirm: PlannedConfirmation[];
+  /** Pendências PENDING que mudaram de horário/valor no App Barber (serão atualizadas). */
+  confirmUpdates: (RowRef & { scheduledAt: Date; valueCents: number })[];
+  /** Pendências PENDING que vieram Canceladas (passam para CANCELLED e saem da lista). */
+  confirmCancellations: RowRef[];
   errors: RowError[];
   warnings: PreviewWarning[];
   counts: PreviewCounts;
@@ -83,8 +117,12 @@ export type PreviewInput = {
   now: Date;
   /** Comandas já importadas (externalId → total salvo). */
   existing: ReadonlyMap<string, { totalCents: number }>;
-  /** Barber.appBarberCode → Barber.id (só barbeiros ativos). */
+  /** Barber.appBarberCode → Barber.id (só barbeiros ativos que IMPORTAM do App Barber). */
   barberIdByCode: ReadonlyMap<string, string>;
+  /** Barbeiros ativos que NÃO fecham comanda (importsFromAppBarber = false): código → id e nome. */
+  manualBarbers?: ReadonlyMap<string, { id: string; name: string }>;
+  /** Comandas que já são "a confirmar" (qualquer status), pela chave da comanda. */
+  existingConfirmations?: ReadonlyMap<string, { status: ConfirmationStatusValue; scheduledAt: Date; valueCents: number }>;
   feeBpsByMethod: Readonly<Record<PaymentMethodValue, number>>;
   rules: PriceRuleInput[];
   productCosts: ReadonlyMap<string, number | null>;
@@ -134,13 +172,20 @@ export function buildImportPreview(input: PreviewInput): ImportPreview {
     toImport: [],
     duplicates: [],
     openPast: [],
+    openToday: [],
     openFuture: [],
     cancelled: [],
     review: [],
+    toConfirm: [],
+    confirmUpdates: [],
+    confirmCancellations: [],
     errors: [...input.parseErrors],
     warnings: [],
   };
   const validBarberIds = new Set(input.barberIdByCode.values());
+  const manual = input.manualBarbers ?? new Map<string, { id: string; name: string }>();
+  const manualNames = [...manual.values()].map((b) => b.name).join(" ou ");
+  const confirmations = input.existingConfirmations ?? new Map();
 
   for (const row of input.rows) {
     const ref = { rowNumber: row.rowNumber, comanda: row.comanda };
@@ -158,12 +203,52 @@ export function buildImportPreview(input: PreviewInput): ImportPreview {
       continue;
     }
 
+    // Já é "a confirmar": só a PENDING acompanha o App Barber; as resolvidas nunca voltam.
+    const confirmation = confirmations.get(row.comanda);
+    if (confirmation) {
+      if (confirmation.status === "PENDING" && row.status === "CANCELLED") {
+        preview.confirmCancellations.push(ref);
+      } else if (
+        confirmation.status === "PENDING" &&
+        row.scheduledAt &&
+        (row.scheduledAt.getTime() !== confirmation.scheduledAt.getTime() || row.valueCents !== confirmation.valueCents)
+      ) {
+        preview.confirmUpdates.push({ ...ref, scheduledAt: row.scheduledAt, valueCents: row.valueCents });
+      } else {
+        preview.duplicates.push({ ...ref, status: row.status, valueChanged: false });
+      }
+      continue;
+    }
+
     if (row.status === "CANCELLED") {
       preview.cancelled.push(ref);
       continue;
     }
 
-    const unknown = row.professionalCodes.filter((code) => !input.barberIdByCode.has(code));
+    // Comanda (Aberta de qualquer data, ou Fechada) só de barbeiro que não fecha comanda:
+    // vai para "a confirmar". "PH + 1" NÃO entra aqui: o "+1" pode ser um barbeiro que importa.
+    if (
+      row.professionalCodes.length > 0 &&
+      row.extraProfessionals === 0 &&
+      row.professionalCodes.every((code) => manual.has(code))
+    ) {
+      const barber = manual.get(row.professionalCodes[0])!;
+      const suggestion = suggestForAmount(row.valueCents, input.rules);
+      preview.toConfirm.push({
+        rowNumber: row.rowNumber,
+        externalId: row.comanda,
+        barberId: barber.id,
+        barberName: barber.name,
+        scheduledAt: row.scheduledAt!,
+        valueCents: row.valueCents,
+        notes: row.notes,
+        paymentMethodHint: row.status === "CLOSED" ? row.paymentMethod : null,
+        suggestedRuleLabel: suggestion.kind === "RULE" ? suggestion.rule.label : null,
+      });
+      continue;
+    }
+
+    const unknown = row.professionalCodes.filter((code) => !input.barberIdByCode.has(code) && !manual.has(code));
     if (unknown.length > 0) {
       preview.errors.push({
         ...ref,
@@ -175,12 +260,40 @@ export function buildImportPreview(input: PreviewInput): ImportPreview {
 
     if (row.status === "OPEN") {
       const open: OpenRow = { ...ref, scheduledAt: row.scheduledAt!, valueCents: row.valueCents, professionalCodes: row.professionalCodes };
-      (row.scheduledAt! < input.now ? preview.openPast : preview.openFuture).push(open);
+      const target =
+        row.scheduledAt! >= input.now
+          ? preview.openFuture
+          : toDayKeyBR(row.scheduledAt!) === toDayKeyBR(input.now)
+            ? preview.openToday
+            : preview.openPast;
+      target.push(open);
       continue;
     }
 
     // Fechada nova.
     const multiple = row.professionalCodes.length > 1 || row.extraProfessionals > 0;
+
+    // Vários profissionais: os barbeiros manuais saem da conta. Se sobra um único que importa,
+    // a comanda é dele — com "+N" sem nome, só quando não existe outro barbeiro que importa
+    // (aí o "+N" só pode ser alguém que lança manualmente). Fica um aviso: o outro pode ter lançado.
+    const importing = row.professionalCodes.filter((code) => input.barberIdByCode.has(code));
+    const droppedManual = row.professionalCodes.some((code) => manual.has(code));
+    if (
+      multiple &&
+      importing.length === 1 &&
+      (row.extraProfessionals === 0 ? droppedManual : input.barberIdByCode.size === 1 && manual.size > 0)
+    ) {
+      preview.toImport.push(planVisit(row, input.barberIdByCode.get(importing[0])!, input));
+      preview.warnings.push({
+        ...ref,
+        message:
+          row.extraProfessionals > 0
+            ? `Comanda com outro profissional (+${row.extraProfessionals}): confira se ${manualNames} também lançou este cliente`
+            : `Comanda também com ${row.professionalCodes.filter((c) => manual.has(c)).map((c) => manual.get(c)!.name).join(", ")}: confira se ele também lançou este cliente`,
+      });
+      continue;
+    }
+
     if (multiple) {
       const choice = input.reviewChoices?.get(row.comanda);
       if (choice === undefined) {
@@ -202,6 +315,10 @@ export function buildImportPreview(input: PreviewInput): ImportPreview {
     }
 
     preview.toImport.push(planVisit(row, input.barberIdByCode.get(row.professionalCodes[0])!, input));
+    // Comanda de assinante fechada com valor: pode ser dinheiro que não entrou (já pagou a mensalidade).
+    if (row.valueCents > 0 && row.notes && /club/i.test(row.notes)) {
+      preview.warnings.push({ ...ref, message: "Comanda de clube fechada com valor: confira se o cliente pagou ou é assinante" });
+    }
   }
 
   preview.errors.sort((a, b) => a.rowNumber - b.rowNumber);
@@ -217,6 +334,7 @@ export function buildImportPreview(input: PreviewInput): ImportPreview {
       openFutureCount: preview.openFuture.length,
       cancelledCount: preview.cancelled.length,
       reviewCount: preview.review.length,
+      toConfirmCount: preview.toConfirm.length,
       errorCount: preview.errors.length,
     },
   };

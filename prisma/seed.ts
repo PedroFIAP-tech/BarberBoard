@@ -90,7 +90,7 @@ function weightedPick<T>(options: readonly (readonly [T, number])[]): T {
 // ─── Dados de cadastro ──────────────────────────────────────────────────────
 
 const BARBERS = [
-  { name: "Paulo", appBarberCode: "PH" },
+  { name: "Paulo", appBarberCode: "PH", importsFromAppBarber: false }, // lança manualmente
   { name: "Luiz", appBarberCode: "L.F" },
 ] as const;
 
@@ -232,6 +232,7 @@ async function main() {
   await prisma.$transaction(
     async (tx) => {
       // 1. Limpa tudo, respeitando as foreign keys.
+      await tx.pendingConfirmation.deleteMany();
       await tx.appointmentItem.deleteMany();
       await tx.appointment.deleteMany();
       await tx.priceRuleItem.deleteMany();
@@ -391,7 +392,7 @@ async function main() {
         pendingRows.push({
           id: randomUUID(),
           performedAt: atBR(day, weightedPick(HOUR_WEIGHTS), 0),
-          barberId: chance(LUIZ_SHARE) ? luiz.id : paulo.id,
+          barberId: luiz.id, // só o Luiz importa do App Barber; o Paulo lança manualmente
           paymentMethod,
           feeBps,
           totalCents,
@@ -411,6 +412,26 @@ async function main() {
 
       await tx.appointment.createMany({ data: appointmentRows });
       await tx.appointmentItem.createMany({ data: itemRows });
+
+      // Comandas do Paulo "a confirmar" (ele não fecha comanda no App Barber): dias recentes, hoje e
+      // amanhã. Não somam nada até serem confirmadas. Uma é de assinante ("club" na Obs).
+      const toConfirm = [
+        { days: -2, hour: 10, cents: 4000, notes: null },
+        { days: -2, hour: 15, cents: 5000, notes: null },
+        { days: -1, hour: 11, cents: 8000, notes: "club" },
+        { days: 0, hour: 9, cents: 4000, notes: null },
+        { days: 0, hour: 18, cents: 9000, notes: null },
+        { days: 1, hour: 10, cents: 4000, notes: null },
+      ];
+      await tx.pendingConfirmation.createMany({
+        data: toConfirm.map((c, i) => ({
+          externalId: `seed-pc-${String(i + 1).padStart(3, "0")}`, // comanda real é só dígitos
+          barberId: paulo.id,
+          scheduledAt: atBR(addDays(today, c.days), c.hour, 0),
+          valueCents: c.cents,
+          notes: c.notes,
+        })),
+      });
 
       // 4. Despesas (sem comissão: a regra ainda não está definida).
       const expenseRows: { date: Date; categoryId: string; amountCents: number; description: string }[] = [];
@@ -488,6 +509,7 @@ async function main() {
         "  do Luiz": appointmentRows.filter((a) => a.barberId === luiz.id).length,
         "  do Paulo": appointmentRows.filter((a) => a.barberId === paulo.id).length,
         "  a classificar": pendingRows.length,
+        "Comandas a confirmar (Paulo)": toConfirm.length,
         "Itens": itemRows.length,
         "Regras de valor": PRICE_RULES.length,
         "Despesas": expenseRows.length,

@@ -5,11 +5,11 @@ import { confirmImportAction, type ActionState } from "@/app/importar/actions";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { formatDateTimeBR } from "@/lib/dates";
-import { plural } from "@/lib/labels";
 import { formatBRL } from "@/lib/money";
 import type { OpenRowView } from "@/server/import/queries";
 import { REVIEW_FIELD_PREFIX } from "@/server/import/form";
 import { Section } from "@/components/parts";
+import { confirmLabel, hasWork } from "./confirm-label";
 
 const initialState: ActionState = { error: null };
 
@@ -20,11 +20,16 @@ const initialState: ActionState = { error: null };
 export function ConfirmForm({
   batchId,
   baseCount,
+  toConfirmCount,
+  confirmChanges,
   review,
   barbers,
 }: {
   batchId: string;
   baseCount: number;
+  /** Comandas novas "a confirmar" e mudanças em pendências existentes (também precisam ser gravadas). */
+  toConfirmCount: number;
+  confirmChanges: number;
   review: OpenRowView[];
   barbers: { id: string; name: string }[];
 }) {
@@ -32,7 +37,7 @@ export function ConfirmForm({
   const [state, action, pending] = useActionState(confirm, initialState);
   const [choices, setChoices] = useState<Record<string, string>>({});
   const resolved = Object.values(choices).filter(Boolean).length;
-  const total = baseCount + resolved;
+  const work = { visits: baseCount + resolved, toConfirm: toConfirmCount, confirmChanges };
 
   return (
     <form action={action} className="space-y-4">
@@ -79,12 +84,8 @@ export function ConfirmForm({
 
       {/* Fica logo acima da barra de navegação inferior no celular (--bottom-nav-h). */}
       <div className="sticky bottom-[var(--bottom-nav-h)] -mx-4 border-t bg-background/95 px-4 py-3 backdrop-blur md:pb-[max(0.75rem,env(safe-area-inset-bottom))]">
-        <Button type="submit" disabled={pending || total === 0} className="h-12 w-full text-base">
-          {pending
-            ? "Importando…"
-            : total === 0
-              ? "Nada novo para importar"
-              : `Importar ${plural(total, "visita")}`}
+        <Button type="submit" disabled={pending || !hasWork(work)} className="h-12 w-full text-base">
+          {pending ? "Importando…" : confirmLabel(work)}
         </Button>
       </div>
     </form>

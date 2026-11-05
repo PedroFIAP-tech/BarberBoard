@@ -37,7 +37,7 @@ const FILE_ROWS = [
 ];
 
 const TABLES = [
-  "appointment_items", "appointments", "price_rule_items", "price_rules", "import_batches",
+  "pending_confirmations", "appointment_items", "appointments", "price_rule_items", "price_rules", "import_batches",
   "cash_closings", "expenses", "expense_categories", "payment_fees", "products", "services", "barbers",
 ];
 
@@ -98,6 +98,7 @@ describe("importação do App Barber (banco)", { skip: !isLocal && "TEST_DATABAS
       openFutureCount: 1,
       cancelledCount: 1,
       reviewCount: 1, // 005 "L.F + 1"
+      toConfirmCount: 0, // aqui o Paulo ainda importa (padrão)
       errorCount: 2, // 009 profissional desconhecido, 010 valor inválido
     });
 

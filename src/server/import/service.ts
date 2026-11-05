@@ -69,12 +69,19 @@ function readPendingMeta(meta: Prisma.JsonValue | null): PendingMeta {
 // ─── Contexto do banco para montar a prévia ─────────────────────────────────
 
 async function loadPreviewContext(db: Db, comandas: string[]) {
-  const [existing, barbers, fees, rules, products] = await Promise.all([
+  const [confirmations, existing, barbers, fees, rules, products] = await Promise.all([
+    db.pendingConfirmation.findMany({
+      where: { externalId: { in: comandas } },
+      select: { externalId: true, status: true, scheduledAt: true, valueCents: true },
+    }),
     db.appointment.findMany({
       where: { source: "APP_BARBER", externalId: { in: comandas } },
       select: { externalId: true, totalCents: true },
     }),
-    db.barber.findMany({ where: { active: true, appBarberCode: { not: null } }, select: { id: true, appBarberCode: true } }),
+    db.barber.findMany({
+      where: { active: true, appBarberCode: { not: null } },
+      select: { id: true, name: true, appBarberCode: true, importsFromAppBarber: true },
+    }),
     db.paymentFee.findMany({ select: { method: true, feeBps: true } }),
     db.priceRule.findMany({ where: { active: true }, include: { items: { orderBy: { sortOrder: "asc" } } } }),
     db.product.findMany({ select: { id: true, costCents: true } }),
@@ -89,7 +96,13 @@ async function loadPreviewContext(db: Db, comandas: string[]) {
 
   return {
     existing: new Map(existing.map((a) => [a.externalId!, { totalCents: a.totalCents }])),
-    barberIdByCode: new Map(barbers.map((b) => [b.appBarberCode!, b.id])),
+    barberIdByCode: new Map(barbers.filter((b) => b.importsFromAppBarber).map((b) => [b.appBarberCode!, b.id])),
+    manualBarbers: new Map(
+      barbers.filter((b) => !b.importsFromAppBarber).map((b) => [b.appBarberCode!, { id: b.id, name: b.name }]),
+    ),
+    existingConfirmations: new Map(
+      confirmations.map((c) => [c.externalId, { status: c.status, scheduledAt: c.scheduledAt, valueCents: c.valueCents }]),
+    ),
     feeBpsByMethod,
     rules: rules.map(
       (r): PriceRuleInput => ({
@@ -216,6 +229,34 @@ export async function confirmImport(
           v.items.map((item) => ({ appointmentId: idByExternal.get(v.externalId)!, ...item })),
         );
         if (items.length > 0) await tx.appointmentItem.createMany({ data: items });
+      }
+
+      // Comandas "a confirmar" (barbeiro que não fecha comanda): não viram visita, não somam nada.
+      if (preview.toConfirm.length > 0) {
+        await tx.pendingConfirmation.createMany({
+          data: preview.toConfirm.map((c) => ({
+            externalId: c.externalId,
+            barberId: c.barberId,
+            scheduledAt: c.scheduledAt,
+            valueCents: c.valueCents,
+            notes: c.notes,
+            paymentMethodHint: c.paymentMethodHint,
+            importBatchId: batch.id,
+          })),
+        });
+      }
+      // Só pendências ainda PENDING acompanham o App Barber; as resolvidas nunca mudam.
+      for (const u of preview.confirmUpdates) {
+        await tx.pendingConfirmation.updateMany({
+          where: { externalId: u.comanda, status: "PENDING" },
+          data: { scheduledAt: u.scheduledAt, valueCents: u.valueCents, importBatchId: batch.id },
+        });
+      }
+      if (preview.confirmCancellations.length > 0) {
+        await tx.pendingConfirmation.updateMany({
+          where: { externalId: { in: preview.confirmCancellations.map((c) => c.comanda) }, status: "PENDING" },
+          data: { status: "CANCELLED", resolvedAt: input.now },
+        });
       }
 
       const completed: CompletedMeta = {

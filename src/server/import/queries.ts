@@ -64,10 +64,17 @@ export type PendingImportView = {
   toImport: VisitRowView[];
   review: OpenRowView[];
   openPast: OpenRowView[];
+  /** Abertas de hoje com horário já passado, por barbeiro (em andamento, neutro). */
+  openTodayByBarber: { name: string; count: number }[];
   openPastByBarber: { name: string; count: number }[];
   openFutureCount: number;
   duplicateCount: number;
   cancelledCount: number;
+  /** Comandas novas "a confirmar" por barbeiro (ex.: Paulo: 48 · R$ 2.420,00). Não somam nada. */
+  toConfirmByBarber: { name: string; count: number; totalCents: number }[];
+  /** Pendências que serão atualizadas (mudaram no App Barber) ou canceladas. */
+  confirmUpdatedCount: number;
+  confirmCancelledCount: number;
   warnings: PreviewWarning[];
   errors: RowError[];
   barbers: { id: string; name: string }[];
@@ -86,6 +93,7 @@ export type CompletedImportView = {
     openFutureCount: number;
     cancelledCount: number;
     reviewCount: number;
+    toConfirmCount: number;
     errorCount: number;
   };
   /** Visitas que este lote criou (e o total delas), lidas do banco. */
@@ -120,6 +128,7 @@ export async function getImportView(db: Db, input: { batchId: string; now: Date 
       openFutureCount: true,
       cancelledCount: true,
       reviewCount: true,
+      toConfirmCount: true,
       errorCount: true,
     },
   });
@@ -147,6 +156,7 @@ export async function getImportView(db: Db, input: { batchId: string; now: Date 
       openFutureCount: batch.openFutureCount,
       cancelledCount: batch.cancelledCount,
       reviewCount: batch.reviewCount,
+      toConfirmCount: batch.toConfirmCount,
       errorCount: batch.errorCount,
     },
     created: {
@@ -207,9 +217,22 @@ async function pendingView(db: Db, input: { batchId: string; now: Date }): Promi
       }))
       .sort((a, b) => a.scheduledAt.getTime() - b.scheduledAt.getTime()),
     openPastByBarber: countByProfessional(preview.openPast, nameByCode),
+    openTodayByBarber: countByProfessional(preview.openToday, nameByCode),
     openFutureCount: preview.openFuture.length,
     duplicateCount: preview.duplicates.length,
     cancelledCount: preview.cancelled.length,
+    toConfirmByBarber: [
+      ...preview.toConfirm
+        .reduce((acc, c) => {
+          const cur = acc.get(c.barberName) ?? { name: c.barberName, count: 0, totalCents: 0 };
+          cur.count += 1;
+          cur.totalCents += c.valueCents;
+          return acc.set(c.barberName, cur);
+        }, new Map<string, { name: string; count: number; totalCents: number }>())
+        .values(),
+    ],
+    confirmUpdatedCount: preview.confirmUpdates.length,
+    confirmCancelledCount: preview.confirmCancellations.length,
     warnings: preview.warnings,
     errors: preview.errors,
     barbers: barbers.map((b) => ({ id: b.id, name: b.name })),

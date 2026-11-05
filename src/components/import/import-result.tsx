@@ -44,6 +44,7 @@ export function ImportResult({ view }: { view: CompletedImportView }) {
           <Row title="Agendadas" value={counts.openFutureCount} />
           <Row title="Canceladas" value={counts.cancelledCount} />
           <Row title="Ficaram para revisão" value={counts.reviewCount} />
+          <Row title="A confirmar (barbeiro que não fecha comanda)" value={counts.toConfirmCount} />
           <Row title="Com erro" value={counts.errorCount} />
         </RowList>
       </Section>

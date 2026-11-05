@@ -198,6 +198,7 @@ describe("buildImportPreview", () => {
       openFutureCount: 0,
       cancelledCount: 1,
       reviewCount: 1,
+      toConfirmCount: 0,
       errorCount: 1,
     });
   });
@@ -279,6 +280,142 @@ describe("countByProfessional", () => {
     assert.deepEqual(
       countByProfessional([{ professionalCodes: ["PH"] }, { professionalCodes: ["L.F"] }], names).map((b) => b.name),
       ["Luiz", "Paulo"],
+    );
+  });
+});
+
+describe("barbeiro que não fecha comanda (Paulo, PH): comandas a confirmar", () => {
+  const paulo = { id: "paulo", name: "Paulo" };
+  const manualInput = (rows: NormalizedRow[], overrides: Partial<PreviewInput> = {}) =>
+    input(rows, {
+      barberIdByCode: new Map([["L.F", "luiz"]]),
+      manualBarbers: new Map([["PH", paulo]]),
+      ...overrides,
+    });
+
+  test("Abertas (passada, de hoje e futura) e Fechadas do PH vão para 'a confirmar'; Cancelada é descartada", () => {
+    const p = buildImportPreview(
+      manualInput([
+        row({ comanda: "1", professionalCodes: ["PH"], valueCents: 5000, paymentMethod: "CASH" }),
+        row({ comanda: "2", professionalCodes: ["PH"], status: "OPEN", paymentMethod: null }),
+        row({ comanda: "3", professionalCodes: ["PH"], status: "OPEN", paymentMethod: null, scheduledAt: new Date("2026-11-10T13:00:00Z") }),
+        row({ comanda: "4", professionalCodes: ["PH"], status: "CANCELLED", paymentMethod: null }),
+        row({ comanda: "5", professionalCodes: ["L.F"] }),
+      ]),
+    );
+    assert.deepEqual(p.toConfirm.map((c) => c.externalId), ["1", "2", "3"]);
+    assert.equal(p.counts.toConfirmCount, 3);
+    assert.deepEqual([p.openPast.length, p.openFuture.length, p.errors.length, p.review.length, p.cancelled.length], [0, 0, 0, 0, 1]);
+    assert.deepEqual(p.toImport.map((v) => v.externalId), ["5"], "só a do Luiz vira visita");
+    const closed = p.toConfirm[0];
+    assert.deepEqual([closed.barberId, closed.paymentMethodHint, closed.suggestedRuleLabel], ["paulo", "CASH", "Corte e sobrancelha"]);
+    assert.equal(p.toConfirm[1].paymentMethodHint, null);
+  });
+
+  test("reimportar: PENDING que mudou é atualizada, PENDING que veio Cancelada é cancelada, igual não duplica", () => {
+    const at = new Date("2026-11-03T19:30:00Z");
+    const existingConfirmations = new Map([
+      ["1", { status: "PENDING" as const, scheduledAt: at, valueCents: 4000 }],
+      ["2", { status: "PENDING" as const, scheduledAt: at, valueCents: 4000 }],
+      ["3", { status: "PENDING" as const, scheduledAt: at, valueCents: 4000 }],
+    ]);
+    const p = buildImportPreview(
+      manualInput(
+        [
+          row({ comanda: "1", professionalCodes: ["PH"], status: "OPEN", paymentMethod: null, valueCents: 5000 }),
+          row({ comanda: "2", professionalCodes: [], status: "CANCELLED", paymentMethod: null }),
+          row({ comanda: "3", professionalCodes: ["PH"], status: "OPEN", paymentMethod: null }),
+        ],
+        { existingConfirmations },
+      ),
+    );
+    assert.deepEqual(p.confirmUpdates.map((u) => [u.comanda, u.valueCents]), [["1", 5000]]);
+    assert.deepEqual(p.confirmCancellations.map((c) => c.comanda), ["2"]);
+    assert.deepEqual(p.duplicates.map((d) => d.comanda), ["3"]);
+    assert.equal(p.counts.toConfirmCount, 0);
+  });
+
+  test("confirmada, clube, não veio e cancelada nunca voltam nem mudam", () => {
+    const at = new Date("2026-11-03T19:30:00Z");
+    const existingConfirmations = new Map(
+      (["CONFIRMED", "CLUB", "NO_SHOW", "CANCELLED"] as const).map((status, i) => [String(i + 1), { status, scheduledAt: at, valueCents: 4000 }]),
+    );
+    const p = buildImportPreview(
+      manualInput(
+        [1, 2, 3, 4].map((n) => row({ comanda: String(n), professionalCodes: ["PH"], status: "OPEN", paymentMethod: null, valueCents: 9900 })),
+        { existingConfirmations },
+      ),
+    );
+    assert.equal(p.duplicates.length, 4);
+    assert.deepEqual([p.toConfirm.length, p.confirmUpdates.length, p.confirmCancellations.length], [0, 0, 0]);
+  });
+
+  test('"L.F + 1" entra para o Luiz, com aviso para conferir se o Paulo também lançou', () => {
+    const p = buildImportPreview(manualInput([row({ professionalCodes: ["L.F"], extraProfessionals: 1 })]));
+    assert.equal(p.review.length, 0);
+    assert.equal(p.toImport[0].barberId, "luiz");
+    assert.equal(p.warnings[0].message, "Comanda com outro profissional (+1): confira se Paulo também lançou este cliente");
+  });
+
+  test('"L.F + PH" entra para o Luiz, com aviso nomeando o Paulo', () => {
+    const p = buildImportPreview(manualInput([row({ professionalCodes: ["L.F", "PH"] })]));
+    assert.equal(p.toImport[0].barberId, "luiz");
+    assert.match(p.warnings[0].message, /também com Paulo/);
+  });
+
+  test('"PH + 1" não vai para "a confirmar" (o +1 pode ser o Luiz): vai para revisão', () => {
+    const p = buildImportPreview(manualInput([row({ professionalCodes: ["PH"], extraProfessionals: 1 })]));
+    assert.equal(p.toConfirm.length, 0);
+    assert.equal(p.review.length, 1);
+  });
+
+  test('com dois barbeiros que importam, "L.F + 1" é ambíguo: continua em revisão', () => {
+    const p = buildImportPreview(
+      manualInput([row({ professionalCodes: ["L.F"], extraProfessionals: 1 })], {
+        barberIdByCode: new Map([
+          ["L.F", "luiz"],
+          ["X.Y", "outro"],
+        ]),
+      }),
+    );
+    assert.equal(p.review.length, 1);
+  });
+
+  test("sem barbeiro manual cadastrado, nada muda", () => {
+    const p = buildImportPreview(input([row({ professionalCodes: ["L.F"], extraProfessionals: 1 })]));
+    assert.equal(p.review.length, 1);
+    assert.equal(p.counts.toConfirmCount, 0);
+  });
+});
+
+describe("Abertas de hoje e clube do Luiz", () => {
+  test("Aberta de hoje com horário passado = em andamento; de ontem = pendente; futura = agendada", () => {
+    // NOW = 04/11 12:00 em Brasília
+    const p = buildImportPreview(
+      input([
+        row({ comanda: "1", status: "OPEN", paymentMethod: null, scheduledAt: new Date("2026-11-04T12:00:00Z") }), // 04/11 09:00
+        row({ comanda: "2", status: "OPEN", paymentMethod: null, scheduledAt: new Date("2026-11-03T22:00:00Z") }), // 03/11 19:00
+        row({ comanda: "3", status: "OPEN", paymentMethod: null, scheduledAt: new Date("2026-11-04T20:00:00Z") }), // 04/11 17:00
+      ]),
+    );
+    assert.deepEqual(p.openToday.map((r) => r.comanda), ["1"]);
+    assert.deepEqual(p.openPast.map((r) => r.comanda), ["2"]);
+    assert.deepEqual(p.openFuture.map((r) => r.comanda), ["3"]);
+    assert.equal(p.counts.openPastCount, 1);
+  });
+
+  test("comanda Fechada do Luiz com 'club' na Obs entra, com aviso; com R$ 0 não avisa", () => {
+    const p = buildImportPreview(
+      input([
+        row({ comanda: "1", notes: "Club" }),
+        row({ comanda: "2", notes: "cliente do club", valueCents: 0 }),
+        row({ comanda: "3", notes: "sem nada" }),
+      ]),
+    );
+    assert.equal(p.toImport.length, 3);
+    assert.deepEqual(
+      p.warnings.map((w) => [w.comanda, w.message]),
+      [["1", "Comanda de clube fechada com valor: confira se o cliente pagou ou é assinante"]],
     );
   });
 });

@@ -44,6 +44,18 @@ enum ClassificationStatus {
   PENDING
 }
 
+/// Situação de uma comanda "a confirmar" (barbeiro que não fecha comanda no App Barber).
+/// PENDING: aguardando. CONFIRMED: virou visita paga. CLUB: virou visita de assinante (R$ 0).
+/// NO_SHOW: cliente não veio. CANCELLED: cancelada no App Barber enquanto PENDING.
+/// Só PENDING muda na reimportação; os demais nunca voltam.
+enum ConfirmationStatus {
+  PENDING
+  CONFIRMED
+  CLUB
+  NO_SHOW
+  CANCELLED
+}
+
 /// PENDING: prévia gerada, aguardando confirmação. COMPLETED: visitas criadas. FAILED: erro ao confirmar.
 enum ImportStatus {
   PENDING
@@ -54,16 +66,20 @@ enum ImportStatus {
 // ─── Cadastros ──────────────────────────────────────────────────────────────
 
 model Barber {
-  id            String   @id @default(cuid())
-  name          String
+  id                   String   @id @default(cuid())
+  name                 String
   /// Como o barbeiro aparece na coluna "Profissional" do App Barber (ex.: "PH", "L.F").
-  appBarberCode String?  @unique @map("app_barber_code")
-  active        Boolean  @default(true)
-  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz
+  appBarberCode        String?  @unique @map("app_barber_code")
+  /// false = barbeiro que não fecha comanda no App Barber (Paulo): as comandas dele são ignoradas
+  /// na importação e as visitas entram por lançamento manual.
+  importsFromAppBarber Boolean  @default(true) @map("imports_from_app_barber")
+  active               Boolean  @default(true)
+  createdAt            DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt            DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
-  appointments Appointment[]
-  expenses     Expense[]
+  appointments         Appointment[]
+  expenses             Expense[]
+  pendingConfirmations PendingConfirmation[]
 
   @@map("barbers")
 }
@@ -133,28 +149,35 @@ model ExpenseCategory {
 /// Invariante (garantida pelo código que grava visitas, ver assertVisitItemsConsistent em
 /// src/domain/import-preview.ts): CLASSIFIED ⇒ itens somam totalCents; PENDING ⇒ nenhum item.
 model Appointment {
-  id             String               @id @default(cuid())
-  performedAt    DateTime             @map("performed_at") @db.Timestamptz
-  barberId       String               @map("barber_id")
-  paymentMethod  PaymentMethod        @map("payment_method")
-  feeBps         Int                  @map("fee_bps")
-  totalCents     Int                  @map("total_cents")
-  feeCents       Int                  @map("fee_cents")
-  netCents       Int                  @map("net_cents")
-  notes          String?
-  source         EntrySource          @default(MANUAL)
-  externalId     String?              @map("external_id")
-  importBatchId  String?              @map("import_batch_id")
-  classification ClassificationStatus @default(CLASSIFIED)
+  id                     String               @id @default(cuid())
+  performedAt            DateTime             @map("performed_at") @db.Timestamptz
+  barberId               String               @map("barber_id")
+  paymentMethod          PaymentMethod        @map("payment_method")
+  feeBps                 Int                  @map("fee_bps")
+  totalCents             Int                  @map("total_cents")
+  feeCents               Int                  @map("fee_cents")
+  netCents               Int                  @map("net_cents")
+  notes                  String?
+  source                 EntrySource          @default(MANUAL)
+  externalId             String?              @map("external_id")
+  importBatchId          String?              @map("import_batch_id")
+  classification         ClassificationStatus @default(CLASSIFIED)
+  /// true = horário não informado (lançamento manual de dia passado sem hora). Conta em todos os
+  /// totais, mas fica FORA do mapa de dias/horários do dashboard.
+  performedAtApproximate Boolean              @default(false) @map("performed_at_approximate")
+  /// Visita de assinante do clube: total 0 (a mensalidade é paga à parte). Conta em clientes e no
+  /// ranking de serviços, mas fica fora do ticket médio.
+  subscriptionVisit      Boolean              @default(false) @map("subscription_visit")
   /// Regra de valor usada para gerar os itens (ex.: "Corte e sobrancelha"), para o ranking.
-  priceRuleId    String?              @map("price_rule_id")
-  createdAt      DateTime             @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt      DateTime             @updatedAt @map("updated_at") @db.Timestamptz
+  priceRuleId            String?              @map("price_rule_id")
+  createdAt              DateTime             @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt              DateTime             @updatedAt @map("updated_at") @db.Timestamptz
 
-  barber      Barber            @relation(fields: [barberId], references: [id], onDelete: Restrict)
-  importBatch ImportBatch?      @relation(fields: [importBatchId], references: [id], onDelete: SetNull)
-  priceRule   PriceRule?        @relation(fields: [priceRuleId], references: [id], onDelete: SetNull)
-  items       AppointmentItem[]
+  barber       Barber               @relation(fields: [barberId], references: [id], onDelete: Restrict)
+  importBatch  ImportBatch?         @relation(fields: [importBatchId], references: [id], onDelete: SetNull)
+  priceRule    PriceRule?           @relation(fields: [priceRuleId], references: [id], onDelete: SetNull)
+  items        AppointmentItem[]
+  confirmation PendingConfirmation?
 
   @@unique([source, externalId])
   @@index([performedAt])
@@ -295,12 +318,45 @@ model ImportBatch {
   cancelledCount    Int          @default(0) @map("cancelled_count")
   /// Fechadas com vários profissionais ("L.F + 1") que precisam de revisão.
   reviewCount       Int          @default(0) @map("review_count")
+  /// Comandas novas de barbeiros que não fecham comanda (Paulo): vão para "a confirmar".
+  toConfirmCount    Int          @default(0) @map("to_confirm_count")
   errorCount        Int          @default(0) @map("error_count")
   meta              Json?
   createdAt         DateTime     @default(now()) @map("created_at") @db.Timestamptz
   updatedAt         DateTime     @updatedAt @map("updated_at") @db.Timestamptz
 
-  appointments Appointment[]
+  appointments         Appointment[]
+  pendingConfirmations PendingConfirmation[]
 
   @@map("import_batches")
+}
+
+/// Comanda do App Barber de barbeiro que não fecha comanda (Paulo): fica "a confirmar" e NÃO conta
+/// em nenhuma soma (faturamento, fechamento, dashboard) até virar visita. Ao confirmar, cria-se um
+/// Appointment (source APP_BARBER, externalId = comanda) e esta linha guarda o vínculo.
+model PendingConfirmation {
+  id                String             @id @default(cuid())
+  /// Número da comanda no App Barber (chave da reimportação).
+  externalId        String             @unique @map("external_id")
+  barberId          String             @map("barber_id")
+  scheduledAt       DateTime           @map("scheduled_at") @db.Timestamptz
+  valueCents        Int                @map("value_cents")
+  /// Obs da comanda (pode ter nome do cliente; nunca em logs). "club" sugere visita de assinante.
+  notes             String?
+  /// Forma de pagamento, quando a comanda veio Fechada (só sugestão).
+  paymentMethodHint PaymentMethod?     @map("payment_method_hint")
+  status            ConfirmationStatus @default(PENDING)
+  appointmentId     String?            @unique @map("appointment_id")
+  importBatchId     String?            @map("import_batch_id")
+  resolvedAt        DateTime?          @map("resolved_at") @db.Timestamptz
+  createdAt         DateTime           @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt         DateTime           @updatedAt @map("updated_at") @db.Timestamptz
+
+  barber      Barber       @relation(fields: [barberId], references: [id], onDelete: Restrict)
+  appointment Appointment? @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+  importBatch ImportBatch? @relation(fields: [importBatchId], references: [id], onDelete: SetNull)
+
+  @@index([status, scheduledAt])
+  @@index([barberId, scheduledAt])
+  @@map("pending_confirmations")
 }

@@ -17,7 +17,7 @@ const isLocal = (() => {
 })();
 
 const TABLES = [
-  "appointment_items", "appointments", "price_rule_items", "price_rules", "import_batches",
+  "pending_confirmations", "appointment_items", "appointments", "price_rule_items", "price_rules", "import_batches",
   "cash_closings", "expenses", "expense_categories", "payment_fees", "products", "services", "barbers",
 ];
 

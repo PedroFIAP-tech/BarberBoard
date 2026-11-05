@@ -10,7 +10,13 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { buttonVariants } from "@/components/ui/button";
 import { isValidDayKey, toDayKeyBR, weekdayOfDayKey } from "@/lib/dates";
 import { getDb } from "@/lib/db";
+import { PRIMARY_NAV } from "@/components/nav/nav-items";
+import { plural } from "@/lib/labels";
+import { formatBRL } from "@/lib/money";
 import { getDayClosingView } from "@/server/closing";
+
+// O link para confirmar só aparece quando a tela /lancar existir (Parte B).
+const lancarReady = PRIMARY_NAV.some((i) => i.href === "/lancar" && i.ready);
 
 export const metadata: Metadata = { title: "Fechamento · BarberBoard" };
 
@@ -40,6 +46,24 @@ async function DayClosing({ searchParams }: { searchParams: PageProps<"/fechamen
           <AlertDescription>{lancada === "1" ? "Visita lançada." : "Visita excluída."}</AlertDescription>
         </Alert>
       )}
+
+      {view.toConfirm.map((t) => (
+        <section key={t.barberName} className="rounded-xl border border-amber-300 bg-card px-4 py-3 text-sm">
+          <p className="font-medium">
+            {plural(t.count, `comanda do ${t.barberName}`, `comandas do ${t.barberName}`)} a confirmar ({formatBRL(t.totalCents)})
+          </p>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            Fora do bruto e do caixa até serem confirmadas.{" "}
+            {lancarReady ? (
+              <Link href={`/lancar?dia=${dayKey}`} className="underline underline-offset-4">
+                Confirmar no Lançar
+              </Link>
+            ) : (
+              "A confirmação chega com a tela Lançar."
+            )}
+          </p>
+        </section>
+      ))}
 
       {empty ? (
         <div className="space-y-3 rounded-xl border bg-card p-5 text-center">

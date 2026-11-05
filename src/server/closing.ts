@@ -39,6 +39,8 @@ export type DayClosingView = {
   stale: boolean;
   /** Fundo de troco sugerido: o do fechamento salvo, senão o do último fechamento anterior, senão 0. */
   suggestedOpeningCashCents: number;
+  /** Comandas "a confirmar" do dia, por barbeiro. NÃO entram em nenhuma soma do dia. */
+  toConfirm: { barberName: string; count: number; totalCents: number }[];
 };
 
 /** "2× Corte + Sobrancelha" */
@@ -61,7 +63,8 @@ async function cashSalesOfDay(db: Db, dayKey: string): Promise<number> {
 }
 
 export async function getDayClosingView(db: Db, input: { dayKey: string }): Promise<DayClosingView> {
-  const [rows, barbers, closing, previous] = await Promise.all([
+  const { start, end } = dayBoundsBR(input.dayKey);
+  const [rows, barbers, closing, previous, pending] = await Promise.all([
     db.appointment.findMany({
       where: dayWhere(input.dayKey),
       orderBy: { performedAt: "asc" },
@@ -95,6 +98,12 @@ export async function getDayClosingView(db: Db, input: { dayKey: string }): Prom
       where: { date: { lt: toDbDate(input.dayKey) } },
       orderBy: { date: "desc" },
       select: { openingCashCents: true },
+    }),
+    db.pendingConfirmation.groupBy({
+      by: ["barberId"],
+      where: { status: "PENDING", scheduledAt: { gte: start, lte: end } },
+      _count: { _all: true },
+      _sum: { valueCents: true },
     }),
   ]);
 
@@ -144,6 +153,11 @@ export async function getDayClosingView(db: Db, input: { dayKey: string }): Prom
     },
     stale: closing ? isClosingStale(closing, summary.cashSalesCents) : false,
     suggestedOpeningCashCents: closing?.openingCashCents ?? previous?.openingCashCents ?? 0,
+    toConfirm: pending.map((p) => ({
+      barberName: barberNames[p.barberId] ?? "—",
+      count: p._count._all,
+      totalCents: p._sum.valueCents ?? 0,
+    })),
   };
 }
 
