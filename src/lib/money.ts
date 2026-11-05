@@ -59,3 +59,17 @@ export function formatCentsForInput(cents: number): string {
   const abs = Math.abs(cents);
   return `${sign}${Math.floor(abs / 100)},${String(abs % 100).padStart(2, "0")}`;
 }
+
+/**
+ * Percentual digitado → basis points: "1,99" → 199 · "5" → 500 · "4,9%" → 490 · "abc" → null.
+ * Aceita até 2 casas decimais e de 0% a 100%.
+ */
+export function parsePercentToBps(input: string): number | null {
+  const bps = parseBRLToCents(input.replace("%", "")); // mesma regra de "1.234,56" com 2 casas
+  return bps !== null && bps >= 0 && bps <= 10_000 ? bps : null;
+}
+
+/** 199 → "1,99" (para preencher campo de percentual). */
+export function formatBpsForInput(bps: number): string {
+  return formatCentsForInput(bps);
+}

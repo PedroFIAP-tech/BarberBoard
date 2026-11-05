@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import { bpsToPercent, formatBps, formatBRL, formatCentsForInput, parseBRLToCents, percentToBps } from "./money";
+import {
+  bpsToPercent,
+  formatBps,
+  formatBpsForInput,
+  formatBRL,
+  formatCentsForInput,
+  parseBRLToCents,
+  parsePercentToBps,
+  percentToBps,
+} from "./money";
 
 describe("parseBRLToCents", () => {
   test("formatos aceitos", () => {
@@ -42,4 +51,17 @@ test("formatCentsForInput vai e volta com parseBRLToCents", () => {
   assert.equal(formatCentsForInput(123456), "1234,56");
   assert.equal(formatCentsForInput(-1000), "-10,00");
   for (const cents of [0, 7, 4590, 123456, -1000]) assert.equal(parseBRLToCents(formatCentsForInput(cents)), cents);
+});
+
+test("parsePercentToBps", () => {
+  assert.equal(parsePercentToBps("1,99"), 199);
+  assert.equal(parsePercentToBps("4,98%"), 498);
+  assert.equal(parsePercentToBps("5"), 500);
+  assert.equal(parsePercentToBps("0"), 0);
+  assert.equal(parsePercentToBps("100"), 10000);
+  assert.equal(parsePercentToBps("100,01"), null);
+  assert.equal(parsePercentToBps("-1"), null);
+  assert.equal(parsePercentToBps("1,999"), null);
+  assert.equal(parsePercentToBps("abc"), null);
+  assert.equal(formatBpsForInput(199), "1,99");
 });

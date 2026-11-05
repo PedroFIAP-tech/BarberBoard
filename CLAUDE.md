@@ -47,7 +47,10 @@ As planilhas de referência ficam em docs/referencia/ e não são versionadas:
 - Ticket médio = bruto / nº de visitas (0 quando não há visitas). No mês ou no ano é o bruto do
   período dividido pelas visitas do período, não a média dos tickets diários.
   Ticket por grupo: Serviço, Extra e Produto, cada um dividido pelo mesmo nº de visitas.
-- Taxas da maquininha em basis points por forma de pagamento.
+- Taxas da maquininha em basis points por forma de pagamento, editadas em /catalogo?aba=taxas
+  (entrada em %, ex.: "1,99"). Taxa nova vale para as próximas visitas, inclusive importadas.
+- Catálogo: desativar serviço/produto usado por regra ativa é permitido, mas a tela avisa quais
+  regras ainda o usam. Nome de serviço e de produto é único (mensagem amigável).
 - Preço, custo e taxa ficam congelados no lançamento (AppointmentItem.unitPriceCents/unitCostCents,
   Appointment.feeBps): mudar o catálogo não altera o histórico.
 - Produtos têm preço de custo opcional. Margem = venda - custo; produto sem custo fica fora da margem.
@@ -131,7 +134,7 @@ O plano completo de cada etapa está em docs/PLANO-MVP.md. Andamento:
 - [x] Etapa 0: arrumação (RLS em todas as tabelas, navegação inferior, este roadmap)
 - [x] Etapa 1: Fechamento do dia (/fechamento, tela inicial) e detalhe da visita (/visitas/[id], só leitura)
 - [x] Etapa 2: Classificar e corrigir visitas (/classificar, /visitas/[id], /regras)
-- [ ] Etapa 3: Catálogo e taxas (/catalogo)
+- [x] Etapa 3: Catálogo e taxas (/catalogo, abas Serviços · Produtos · Taxas)
 - [ ] Etapa 4: Despesas (/despesas)
 - [ ] Etapa 5: Lançamento manual de visita (/visitas/nova)
 - [ ] Etapa 6: Dashboard (/dashboard)
@@ -167,6 +170,13 @@ O lançamento manual de atendimentos é uma ação secundária, para visita que 
 - Navegação: src/components/nav/nav-items.ts. Ao entregar uma tela, mude `ready` para true.
   Barra inferior no celular, links no cabeçalho a partir de 768px. Botões fixos no rodapé usam
   `bottom-[var(--bottom-nav-h)]` para ficar acima da barra.
+
+## Testes de tela (ponta a ponta)
+- Sem navegador: build + start apontando para um Postgres em Docker com o seed, e os formulários
+  enviados por HTTP (o React gera os campos da Server Action; funciona sem JavaScript).
+- Extraia os campos ocultos do HTML CRU (não troque &quot; por aspas antes: os valores são JSON).
+- Com Partial Prerender, partes da página chegam depois: <template id="P:n"> no lugar e o conteúdo
+  num <div hidden id="S:n"> mais adiante no HTML.
 
 ## Testes
 - `pnpm test`: testes de unidade (*.test.ts, test runner do Node via tsx), sem banco.
