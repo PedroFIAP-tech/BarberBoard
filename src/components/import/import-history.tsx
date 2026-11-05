@@ -5,7 +5,7 @@ import { formatDateTimeBR } from "@/lib/dates";
 import { getDb } from "@/lib/db";
 import { IMPORT_STATUS_LABELS, plural } from "@/lib/labels";
 import { listRecentImports } from "@/server/import/queries";
-import { RowList } from "./parts";
+import { RowList } from "@/components/parts";
 
 export async function ImportHistory() {
   await connection();

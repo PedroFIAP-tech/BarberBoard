@@ -1,5 +1,6 @@
 import { TZDate } from "@date-fns/tz";
 import { endOfDay, format, startOfDay } from "date-fns";
+import { ptBR } from "date-fns/locale";
 
 // A barbearia opera no horário de Brasília. Todo cálculo de "dia" (fechamento,
 // dashboard por dia/hora) precisa usar este fuso, e não o do servidor (UTC na Vercel).
@@ -28,6 +29,11 @@ export function toDayKeyBR(date: Date | number): string {
 /** "03/11 16:30" (dia/mês hora:minuto, em Brasília). Com `withYear`: "03/11/2026 16:30". */
 export function formatDateTimeBR(date: Date | number, { withYear = false } = {}): string {
   return format(inBR(date), withYear ? "dd/MM/yyyy HH:mm" : "dd/MM HH:mm");
+}
+
+/** "16:30" (hora:minuto em Brasília). */
+export function formatTimeBR(date: Date | number): string {
+  return format(inBR(date), "HH:mm");
 }
 
 /** "03/11/2026" (em Brasília). */
@@ -64,4 +70,51 @@ export function toDbDate(day: string | Date | number): Date {
   const key = typeof day === "string" ? day : toDayKeyBR(day);
   const [y, m, d] = key.split("-").map(Number);
   return new Date(Date.UTC(y, m - 1, d));
+}
+
+// ─── Dia de calendário ("aaaa-mm-dd") ────────────────────────────────────────
+
+const DAY_KEY = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/** "2026-11-04" válido e existente (rejeita "2026-02-31", "04/11/2026"...). */
+export function isValidDayKey(key: unknown): key is string {
+  if (typeof key !== "string") return false;
+  const m = DAY_KEY.exec(key);
+  if (!m) return false;
+  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const date = new Date(Date.UTC(y, mo - 1, d));
+  return date.getUTCFullYear() === y && date.getUTCMonth() === mo - 1 && date.getUTCDate() === d;
+}
+
+/** Primeiro e último instante do dia em Brasília. Ex.: "2026-11-04" → 04/11 00:00 até 23:59:59.999 (BR). */
+export function dayBoundsBR(key: string): { start: Date; end: Date } {
+  const [y, m, d] = key.split("-").map(Number);
+  return {
+    start: new Date(new TZDate(y, m - 1, d, 0, 0, 0, 0, TZ).getTime()),
+    end: new Date(new TZDate(y, m - 1, d, 23, 59, 59, 999, TZ).getTime()),
+  };
+}
+
+/** Soma (ou subtrai) dias: shiftDayKey("2026-11-30", 1) → "2026-12-01". */
+export function shiftDayKey(key: string, days: number): string {
+  const date = toDbDate(key);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+/** Dia da semana do dia de calendário: 0 = domingo … 6 = sábado. */
+export function weekdayOfDayKey(key: string): number {
+  return toDbDate(key).getUTCDay();
+}
+
+/** "2026-11-04" → "quarta-feira, 4 de novembro". */
+export function formatDayLongBR(key: string): string {
+  const [y, m, d] = key.split("-").map(Number);
+  return format(new TZDate(y, m - 1, d, 12, 0, 0, 0, TZ), "EEEE, d 'de' MMMM", { locale: ptBR });
+}
+
+/** "2026-11-04" → "04/11/2026". */
+export function formatDayKeyBR(key: string): string {
+  const [y, m, d] = key.split("-");
+  return `${d}/${m}/${y}`;
 }

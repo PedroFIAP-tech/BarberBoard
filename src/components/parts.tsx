@@ -1,4 +1,4 @@
-// Peças visuais compartilhadas pelas telas de importação (sem lógica de negócio).
+// Peças visuais compartilhadas pelas telas (sem lógica de negócio).
 
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";

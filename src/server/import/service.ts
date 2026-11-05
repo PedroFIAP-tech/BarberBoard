@@ -10,6 +10,7 @@
 
 import type { Prisma, PrismaClient } from "@/generated/prisma/client";
 import { buildImportPreview, type ImportPreview, type PreviewWarning } from "@/domain/import-preview";
+import { PAYMENT_METHODS } from "@/domain/payments";
 import type { PriceRuleInput } from "@/domain/price-rules";
 import type { NormalizedRow, PaymentMethodValue, RowError } from "@/importers/app-barber/normalize-row";
 import { ImportFileError, parseAppBarberExport } from "@/importers/app-barber/parse";
@@ -80,7 +81,7 @@ async function loadPreviewContext(db: Db, comandas: string[]) {
   ]);
 
   const feeBpsByMethod = {} as Record<PaymentMethodValue, number>;
-  for (const method of ["PIX", "CASH", "DEBIT", "CREDIT"] as const) {
+  for (const method of PAYMENT_METHODS) {
     const fee = fees.find((f) => f.method === method);
     if (!fee) throw new ImportStateError(`Taxa da forma de pagamento ${method} não cadastrada`);
     feeBpsByMethod[method] = fee.feeBps;

@@ -60,6 +60,16 @@ As planilhas de referência ficam em docs/referencia/ e não são versionadas:
   R$ 40 sugere Corte mesmo a Barba custando R$ 40 (barba é rara); o barbeiro corrige quando for barba.
   Catálogo e regras precisam ser fáceis de editar: os preços ainda vão mudar.
 - Comanda Fechada de R$ 0,00 entra como visita de total 0 (cortesia ou visita de assinante).
+- Classificar/corrigir: toda escrita de itens fora da importação passa por src/server/appointments.ts
+  (setAppointmentItems e derivados), em transação, com a visita travada (FOR UPDATE): os itens
+  SEMPRE fecham com o total da comanda (o total nunca muda), o custo do produto é congelado, e
+  CLASSIFIED/PENDING segue a invariante. "Aplicar a todas de R$ X" só pega visitas ainda PENDING
+  (seguro contra cliques simultâneos). "Salvar como regra" é recusado se o valor já tem regra ativa.
+- Editar ou desativar uma regra não muda visitas já classificadas por ela (itens congelados).
+- Fechamento do dia: dia de calendário em Brasília ("aaaa-mm-dd", src/lib/dates.ts). Conferência de
+  caixa: esperado = fundo de troco + visitas em dinheiro do dia, recalculado no SERVIDOR ao salvar
+  (um CashClosing por dia, upsert). Se o dinheiro do dia mudar depois (nova importação, correção),
+  a tela avisa "fechamento desatualizado" e pede nova conferência.
 - Desativar (active = false) é o único jeito de "excluir" serviço, produto ou barbeiro:
   some do lançamento, mas continua no histórico.
 
@@ -115,41 +125,53 @@ Caminho no app: Comandas → Histórico de Comandas → filtro "Clientes" → bo
 - Taxa de ocupação
 - Comissão: 0% em todos os serviços no App Barber hoje
 
-## Roadmap de telas
-1. Importação do histórico de comandas do App Barber (/importar)
-2. Fechamento do dia
-3. Catálogo (/catalogo, abas Serviços e Produtos)
-4. Dashboard
+## Roadmap
+O plano completo de cada etapa está em docs/PLANO-MVP.md. Andamento:
+- [x] Etapas 1–3 anteriores: base, schema, cálculos, importação do App Barber (/importar)
+- [x] Etapa 0: arrumação (RLS em todas as tabelas, navegação inferior, este roadmap)
+- [x] Etapa 1: Fechamento do dia (/fechamento, tela inicial) e detalhe da visita (/visitas/[id], só leitura)
+- [x] Etapa 2: Classificar e corrigir visitas (/classificar, /visitas/[id], /regras)
+- [ ] Etapa 3: Catálogo e taxas (/catalogo)
+- [ ] Etapa 4: Despesas (/despesas)
+- [ ] Etapa 5: Lançamento manual de visita (/visitas/nova)
+- [ ] Etapa 6: Dashboard (/dashboard)
+- [ ] Etapa 7: Login (obrigatório antes de produção)
+- [ ] Etapa 8: Produção (Supabase de produção, Vercel, PWA, backup)
 
 O lançamento manual de atendimentos é uma ação secundária, para visita que não passou pelo App Barber.
-
-A importação está dividida em 3 entregas:
-- 3.1: schema, leitor do .xlsx, prévia (lógica pura), serviço e testes (feito)
-- 3.2: tela /importar com upload, prévia (pendentes por barbeiro, revisão) e confirmação (feito)
-- 3.3: /classificar e regras de valor. Requisitos já combinados:
-  - classificar as visitas PENDING com um toque (regras do valor, serviços com o mesmo preço);
-  - CORRIGIR os itens de qualquer visita importada (ex.: comanda de R$ 40 que foi barba entrou
-    como Corte pela regra; o barbeiro troca para Barba). Os itens continuam somando o total;
-  - ao criar ou editar uma regra, oferecer "aplicar às visitas pendentes de R$ X".
 
 ## Organização do código
 - src/domain/: cálculos puros (sem Prisma nem React), recebem dados e devolvem números
   (pricing.ts: valores da visita; reports.ts: grupos, ticket, margem; price-rules.ts: regras de valor;
   import-preview.ts: destino de cada comanda na importação)
 - src/importers/app-barber/: leitura do .xlsx do App Barber (leitor mínimo que ignora o styles.xml)
-- src/server/: única camada que fala com o Prisma (recebe o client como parâmetro)
+- src/server/: única camada que fala com o Prisma (recebe o client como parâmetro).
+  Erros de regra de negócio são classes próprias (ImportFileError, VisitItemsError...) com mensagem
+  pronta para a tela; o resto vai para o log só por nome/código (src/lib/log.ts).
+- Funções usadas por Server Components não podem ficar em módulos "use client" (ex.: as linhas do
+  editor de itens ficam em src/components/items/editor-rows.ts, sem "use client").
 - src/lib/: infraestrutura e utilitários (db, money, dates, utils)
 - prisma/: schema, migrations e seed
 - O seed APAGA todos os dados; só roda com SEED_ALLOW_RESET=true. Com SEED_VISITS=false cria só os
   cadastros (barbeiros, catálogo, regras, taxas), para testar a importação real num dev limpo
-- src/app/: rotas e Server Actions finas (validam, chamam src/server, redirecionam)
+- src/app/: rotas e Server Actions finas (validam com zod de src/schemas, chamam src/server,
+  `revalidatePath("/", "layout")` quando muda algo que a navegação mostra, e redirecionam).
+  `/` é redirecionado para /fechamento no next.config.ts (não há src/app/page.tsx).
 - Com cacheComponents ativo, leituras do banco ficam em componentes dentro de <Suspense>,
   com `await connection()` antes de usar `new Date()`
 - Nunca editar uma migration existente: sempre criar uma nova
+- Tabela nova = migration nova com `ALTER TABLE "<tabela>" ENABLE ROW LEVEL SECURITY` (sem policies).
+  Sem RLS, a Data API do Supabase expõe a tabela para quem tiver a URL e a chave publishable; o
+  Prisma conecta como dono das tabelas e não é afetado. O teste src/server/db-security.db.test.ts
+  falha se alguma tabela do schema public ficar sem RLS.
+- Navegação: src/components/nav/nav-items.ts. Ao entregar uma tela, mude `ready` para true.
+  Barra inferior no celular, links no cabeçalho a partir de 768px. Botões fixos no rodapé usam
+  `bottom-[var(--bottom-nav-h)]` para ficar acima da barra.
 
 ## Testes
 - `pnpm test`: testes de unidade (*.test.ts, test runner do Node via tsx), sem banco.
 - `pnpm test:db`: testes de banco (*.db.test.ts) num Postgres temporário em Docker, descartado no fim.
+  Os arquivos rodam um por vez (--test-concurrency=1), porque todos limpam as mesmas tabelas.
   Só rodam com host local; nunca apontar TEST_DATABASE_URL para o Supabase.
 - Fixtures de importação são sintéticas (src/importers/app-barber/test-fixture.ts). O único teste
   com a exportação real confere só contagens e é pulado se o arquivo não existir.

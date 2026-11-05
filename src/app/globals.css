@@ -128,3 +128,15 @@
     @apply font-sans;
   }
 }
+
+/* Altura da barra de navegação inferior (celular). A partir de 768px a navegação vai para o
+   cabeçalho e a barra some. Usada no espaço do fim da página e nos botões fixos no rodapé. */
+:root {
+  --bottom-nav-h: calc(3.5rem + env(safe-area-inset-bottom));
+}
+
+@media (width >= 48rem) {
+  :root {
+    --bottom-nav-h: 0px;
+  }
+}

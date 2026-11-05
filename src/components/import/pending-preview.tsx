@@ -7,7 +7,7 @@ import { PAYMENT_METHOD_LABELS, plural } from "@/lib/labels";
 import { formatBRL } from "@/lib/money";
 import type { PendingImportView, Period } from "@/server/import/queries";
 import { ConfirmForm } from "./confirm-form";
-import { Row, RowList, Section, Stat } from "./parts";
+import { Row, RowList, Section, Stat } from "@/components/parts";
 
 export function PeriodText({ period }: { period: Period }) {
   if (!period.from || !period.to) return null;

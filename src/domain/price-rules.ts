@@ -38,14 +38,16 @@ export type RuleSuggestion =
 
 const isNonNegativeInt = (n: number) => Number.isInteger(n) && n >= 0;
 
-/** Lista de problemas da regra (vazia = válida). Usada ao salvar e antes de aplicar. */
-export function validatePriceRule(rule: Omit<PriceRuleInput, "id" | "active">): string[] {
+/**
+ * Problemas de uma lista de itens que precisa fechar com um valor (vazia = válida).
+ * Usada pelas regras de valor e pela classificação/correção de visitas.
+ */
+export function validateItems(items: PriceRuleItemInput[], amountCents: number, amountName = "o valor"): string[] {
   const errors: string[] = [];
-  if (rule.label.trim() === "") errors.push("Nome da regra é obrigatório");
-  if (!isNonNegativeInt(rule.amountCents)) errors.push("Valor da regra deve ser um inteiro >= 0");
-  if (rule.items.length === 0) errors.push("A regra precisa de pelo menos um item");
+  if (!isNonNegativeInt(amountCents)) errors.push("Valor deve ser um inteiro >= 0");
+  if (items.length === 0) errors.push("Adicione pelo menos um item");
 
-  rule.items.forEach((item, i) => {
+  items.forEach((item, i) => {
     const n = i + 1;
     if ((item.serviceId === null) === (item.productId === null)) {
       errors.push(`Item ${n}: escolha um serviço OU um produto`);
@@ -59,12 +61,19 @@ export function validatePriceRule(rule: Omit<PriceRuleInput, "id" | "active">): 
   });
 
   if (errors.length === 0) {
-    const sum = rule.items.reduce((s, item) => s + calcItemTotal(item), 0);
-    if (sum !== rule.amountCents) {
-      errors.push(`A soma dos itens (${sum}) tem que ser igual ao valor da regra (${rule.amountCents})`);
+    const sum = items.reduce((s, item) => s + calcItemTotal(item), 0);
+    if (sum !== amountCents) {
+      errors.push(`A soma dos itens (${sum}) tem que ser igual a ${amountName} (${amountCents})`);
     }
   }
   return errors;
+}
+
+/** Lista de problemas da regra (vazia = válida). Usada ao salvar e antes de aplicar. */
+export function validatePriceRule(rule: Omit<PriceRuleInput, "id" | "active">): string[] {
+  const errors: string[] = [];
+  if (rule.label.trim() === "") errors.push("Nome da regra é obrigatório");
+  return [...errors, ...validateItems(rule.items, rule.amountCents, "o valor da regra")];
 }
 
 /** Qual regra (se alguma) se aplica a um valor. Só regras ativas e válidas contam. */

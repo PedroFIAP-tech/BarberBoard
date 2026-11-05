@@ -1,6 +1,21 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import { endOfDayBR, formatDateBR, formatDateTimeBR, parseDateTimeBR, startOfDayBR, toDayKeyBR, toDbDate } from "./dates";
+import {
+  dayBoundsBR,
+  endOfDayBR,
+  formatDateBR,
+  formatDateTimeBR,
+  formatDayKeyBR,
+  formatDayLongBR,
+  formatTimeBR,
+  isValidDayKey,
+  parseDateTimeBR,
+  shiftDayKey,
+  startOfDayBR,
+  toDayKeyBR,
+  toDbDate,
+  weekdayOfDayKey,
+} from "./dates";
 
 describe("dia em Brasília", () => {
   // 2026-11-04 02:30Z = 03/11 23:30 em Brasília (UTC-3)
@@ -49,7 +64,42 @@ describe("formatação em Brasília", () => {
     assert.equal(formatDateTimeBR(late, { withYear: true }), "03/11/2026 23:30");
   });
 
+  test("formatTimeBR", () => {
+    assert.equal(formatTimeBR(late), "23:30");
+  });
+
   test("formatDateBR", () => {
     assert.equal(formatDateBR(late), "03/11/2026");
+  });
+});
+
+describe("dia de calendário", () => {
+  test("isValidDayKey", () => {
+    assert.equal(isValidDayKey("2026-11-04"), true);
+    assert.equal(isValidDayKey("2026-02-29"), false); // 2026 não é bissexto
+    assert.equal(isValidDayKey("2028-02-29"), true);
+    assert.equal(isValidDayKey("2026-13-01"), false);
+    assert.equal(isValidDayKey("04/11/2026"), false);
+    assert.equal(isValidDayKey(undefined), false);
+    assert.equal(isValidDayKey(["2026-11-04"]), false);
+  });
+
+  test("dayBoundsBR: o dia de Brasília em UTC", () => {
+    const { start, end } = dayBoundsBR("2026-11-04");
+    assert.equal(start.toISOString(), "2026-11-04T03:00:00.000Z");
+    assert.equal(end.toISOString(), "2026-11-05T02:59:59.999Z");
+  });
+
+  test("shiftDayKey atravessa mês e ano", () => {
+    assert.equal(shiftDayKey("2026-11-30", 1), "2026-12-01");
+    assert.equal(shiftDayKey("2026-12-31", 1), "2027-01-01");
+    assert.equal(shiftDayKey("2026-03-01", -1), "2026-02-28");
+  });
+
+  test("weekdayOfDayKey e formatação", () => {
+    assert.equal(weekdayOfDayKey("2026-11-04"), 3); // quarta
+    assert.equal(weekdayOfDayKey("2026-11-09"), 1); // segunda
+    assert.equal(formatDayLongBR("2026-11-04"), "quarta-feira, 4 de novembro");
+    assert.equal(formatDayKeyBR("2026-11-04"), "04/11/2026");
   });
 });

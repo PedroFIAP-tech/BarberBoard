@@ -18,4 +18,5 @@ for _ in $(seq 1 60); do
 done
 
 DIRECT_URL="$URL" DATABASE_URL="$URL" pnpm exec prisma migrate deploy
-TEST_DATABASE_URL="$URL" pnpm exec tsx --test "src/**/*.db.test.ts"
+# Um arquivo por vez: os testes de banco limpam as mesmas tabelas.
+TEST_DATABASE_URL="$URL" pnpm exec tsx --test --test-concurrency=1 "src/**/*.db.test.ts"

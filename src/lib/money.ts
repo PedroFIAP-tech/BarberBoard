@@ -52,3 +52,10 @@ const percentFormatter = new Intl.NumberFormat("pt-BR", {
 export function formatBps(bps: number): string {
   return `${percentFormatter.format(bpsToPercent(bps))}%`;
 }
+
+/** Valor para preencher um campo de texto: 10000 → "100,00" (sem "R$", sem separador de milhar). */
+export function formatCentsForInput(cents: number): string {
+  const sign = cents < 0 ? "-" : "";
+  const abs = Math.abs(cents);
+  return `${sign}${Math.floor(abs / 100)},${String(abs % 100).padStart(2, "0")}`;
+}

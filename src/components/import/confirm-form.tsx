@@ -9,7 +9,7 @@ import { plural } from "@/lib/labels";
 import { formatBRL } from "@/lib/money";
 import type { OpenRowView } from "@/server/import/queries";
 import { REVIEW_FIELD_PREFIX } from "@/server/import/form";
-import { Section } from "./parts";
+import { Section } from "@/components/parts";
 
 const initialState: ActionState = { error: null };
 
@@ -77,7 +77,8 @@ export function ConfirmForm({
         </Alert>
       )}
 
-      <div className="sticky bottom-0 -mx-4 border-t bg-background/95 px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur">
+      {/* Fica logo acima da barra de navegação inferior no celular (--bottom-nav-h). */}
+      <div className="sticky bottom-[var(--bottom-nav-h)] -mx-4 border-t bg-background/95 px-4 py-3 backdrop-blur md:pb-[max(0.75rem,env(safe-area-inset-bottom))]">
         <Button type="submit" disabled={pending || total === 0} className="h-12 w-full text-base">
           {pending
             ? "Importando…"

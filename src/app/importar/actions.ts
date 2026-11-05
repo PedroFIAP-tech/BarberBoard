@@ -2,12 +2,12 @@
 
 // Server Actions da importação. Ficam finas: validam a entrada, chamam o serviço e redirecionam.
 // TODO(login): verificar a sessão em cada action antes do deploy de produção.
-//
-// Erros inesperados são registrados só pelo nome/código: mensagens do Prisma podem conter os dados
-// da consulta (inclusive a Obs), que não podem ir para o log.
+// Erros inesperados vão para o log só pelo nome/código (ver src/lib/log.ts).
 
+import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getDb } from "@/lib/db";
+import { logActionError } from "@/lib/log";
 import { ImportFileError } from "@/importers/app-barber/parse";
 import { parseReviewChoices } from "@/server/import/form";
 import {
@@ -20,11 +20,7 @@ import {
 
 export type ActionState = { error: string | null };
 
-function logUnexpected(where: string, error: unknown) {
-  const name = error instanceof Error ? error.name : typeof error;
-  const code = (error as { code?: unknown } | null)?.code;
-  console.error(`[importar] ${where} falhou: ${name}${code ? ` (${String(code)})` : ""}`);
-}
+const logUnexpected = (where: string, error: unknown) => logActionError("importar", where, error);
 
 const batchIdOk = (id: unknown): id is string => typeof id === "string" && /^[a-z0-9]{1,64}$/i.test(id);
 
@@ -61,6 +57,7 @@ export async function confirmImportAction(batchId: string, _prev: ActionState, f
     logUnexpected("confirmação", error);
     return { error: "Não foi possível concluir a importação. Nada foi gravado; tente de novo." };
   }
+  revalidatePath("/", "layout"); // atualiza o selo de "a classificar" na navegação
   redirect(`/importar/${batchId}`);
 }
 

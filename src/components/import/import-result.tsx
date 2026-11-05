@@ -6,7 +6,7 @@ import { plural } from "@/lib/labels";
 import { formatBRL } from "@/lib/money";
 import type { CompletedImportView } from "@/server/import/queries";
 import { PeriodText } from "./pending-preview";
-import { Row, RowList, Section } from "./parts";
+import { Row, RowList, Section } from "@/components/parts";
 
 export function ImportResult({ view }: { view: CompletedImportView }) {
   const { counts, created } = view;
@@ -73,12 +73,11 @@ export function ImportResult({ view }: { view: CompletedImportView }) {
       )}
 
       <div className="grid gap-2">
-        <span
-          aria-disabled
-          className={buttonVariants({ variant: "secondary", className: "h-11 w-full cursor-not-allowed opacity-60" })}
-        >
-          Classificar visitas (em breve)
-        </span>
+        {created.unclassifiedCount > 0 && (
+          <Link href="/classificar" className={buttonVariants({ className: "h-11 w-full" })}>
+            Classificar {created.unclassifiedCount === 1 ? "a visita" : `as ${created.unclassifiedCount} visitas`}
+          </Link>
+        )}
         <Link href="/importar" className={buttonVariants({ variant: "outline", className: "h-11 w-full" })}>
           Importar outro arquivo
         </Link>

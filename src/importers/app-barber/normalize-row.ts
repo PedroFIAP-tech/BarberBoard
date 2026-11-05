@@ -4,8 +4,9 @@
 import { parseDateTimeBR } from "@/lib/dates";
 import { parseBRLToCents } from "@/lib/money";
 import type { ColumnIndex } from "./columns";
+import type { PaymentMethodValue } from "@/domain/payments";
 
-export type PaymentMethodValue = "PIX" | "CASH" | "DEBIT" | "CREDIT";
+export type { PaymentMethodValue };
 export type ComandaStatus = "CLOSED" | "OPEN" | "CANCELLED";
 
 export type NormalizedRow = {

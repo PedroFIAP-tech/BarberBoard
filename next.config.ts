@@ -27,6 +27,11 @@ const nextConfig: NextConfig = {
       allowedOrigins: codespaceOrigins,
     },
   },
+  // A tela inicial é o Fechamento do dia. Redirecionar aqui (e não numa page.tsx que só chama
+  // redirect()) evita o aviso de validação de navegação do Next 16 em desenvolvimento.
+  redirects() {
+    return [{ source: "/", destination: "/fechamento", permanent: false }];
+  },
   turbopack: {
     rules: {
       "*.css": {
