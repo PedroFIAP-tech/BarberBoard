@@ -55,6 +55,8 @@ As planilhas de referência ficam em docs/referencia/ e não são versionadas:
   Appointment.feeBps): mudar o catálogo não altera o histórico.
 - Produtos têm preço de custo opcional. Margem = venda - custo; produto sem custo fica fora da margem.
 - Lucro líquido = receitas - despesas - taxas.
+- Despesas: data de calendário (@db.Date), valor > 0, categoria ativa (despesa antiga pode manter a
+  categoria desativada), barbeiro opcional (ex.: comissão). Excluir pede confirmação.
 - Regras de valor (PriceRule): comanda de R$ X = estes itens. No App Barber os combos são UM serviço
   ("Corte e sobrancelha"); aqui viram itens para manter a quebra Serviço/Extra. Valor com uma
   regra ativa → itens automáticos; sem regra ou com mais de uma → "a classificar". Regras atuais:
@@ -135,7 +137,7 @@ O plano completo de cada etapa está em docs/PLANO-MVP.md. Andamento:
 - [x] Etapa 1: Fechamento do dia (/fechamento, tela inicial) e detalhe da visita (/visitas/[id], só leitura)
 - [x] Etapa 2: Classificar e corrigir visitas (/classificar, /visitas/[id], /regras)
 - [x] Etapa 3: Catálogo e taxas (/catalogo, abas Serviços · Produtos · Taxas)
-- [ ] Etapa 4: Despesas (/despesas)
+- [x] Etapa 4: Despesas (/despesas, por mês, com categorias)
 - [ ] Etapa 5: Lançamento manual de visita (/visitas/nova)
 - [ ] Etapa 6: Dashboard (/dashboard)
 - [ ] Etapa 7: Login (obrigatório antes de produção)
@@ -175,8 +177,8 @@ O lançamento manual de atendimentos é uma ação secundária, para visita que 
 - Sem navegador: build + start apontando para um Postgres em Docker com o seed, e os formulários
   enviados por HTTP (o React gera os campos da Server Action; funciona sem JavaScript).
 - Extraia os campos ocultos do HTML CRU (não troque &quot; por aspas antes: os valores são JSON).
-- Com Partial Prerender, partes da página chegam depois: <template id="P:n"> no lugar e o conteúdo
-  num <div hidden id="S:n"> mais adiante no HTML.
+- Com Partial Prerender, partes da página chegam depois: <template id="P:x"> no lugar e o conteúdo
+  num <div hidden id="S:x"> mais adiante no HTML (x em base 36: "7", "c", "1a"...).
 
 ## Testes
 - `pnpm test`: testes de unidade (*.test.ts, test runner do Node via tsx), sem banco.

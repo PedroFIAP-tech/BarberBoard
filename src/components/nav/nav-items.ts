@@ -20,7 +20,7 @@ export const PRIMARY_NAV: NavItem[] = [
 /** Itens do menu "Mais". */
 export const MORE_NAV: NavItem[] = [
   { href: "/catalogo", label: "Catálogo", icon: Tags, ready: true },
-  { href: "/despesas", label: "Despesas", icon: Wallet, ready: false },
+  { href: "/despesas", label: "Despesas", icon: Wallet, ready: true },
   { href: "/dashboard", label: "Dashboard", icon: ChartColumn, ready: false },
 ];
 

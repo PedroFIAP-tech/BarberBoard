@@ -118,3 +118,41 @@ export function formatDayKeyBR(key: string): string {
   const [y, m, d] = key.split("-");
   return `${d}/${m}/${y}`;
 }
+
+// ─── Mês ("aaaa-mm") ─────────────────────────────────────────────────────────
+
+const MONTH_KEY = /^(\d{4})-(\d{2})$/;
+
+/** "2026-11" válido (mês 01 a 12). */
+export function isValidMonthKey(key: unknown): key is string {
+  if (typeof key !== "string") return false;
+  const m = MONTH_KEY.exec(key);
+  return !!m && Number(m[2]) >= 1 && Number(m[2]) <= 12;
+}
+
+/** Mês de um dia: "2026-11-04" → "2026-11". */
+export const monthKeyOf = (dayKey: string) => dayKey.slice(0, 7);
+
+/** Soma (ou subtrai) meses: shiftMonthKey("2026-12", 1) → "2027-01". */
+export function shiftMonthKey(key: string, months: number): string {
+  const [y, m] = key.split("-").map(Number);
+  const date = new Date(Date.UTC(y, m - 1 + months, 1));
+  return date.toISOString().slice(0, 7);
+}
+
+/**
+ * Intervalo do mês para colunas @db.Date (meia-noite UTC): [primeiro dia, primeiro dia do mês seguinte).
+ * Use com { gte: start, lt: end }.
+ */
+export function monthDbRange(key: string): { start: Date; end: Date } {
+  return { start: toDbDate(`${key}-01`), end: toDbDate(`${shiftMonthKey(key, 1)}-01`) };
+}
+
+/** Dia gravado numa coluna @db.Date → "aaaa-mm-dd". */
+export const dayKeyFromDbDate = (date: Date) => date.toISOString().slice(0, 10);
+
+/** "2026-11" → "novembro de 2026". */
+export function formatMonthLongBR(key: string): string {
+  const [y, m] = key.split("-").map(Number);
+  return format(new TZDate(y, m - 1, 15, 12, 0, 0, 0, TZ), "MMMM 'de' yyyy", { locale: ptBR });
+}
